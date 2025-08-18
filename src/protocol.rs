@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+use kyori_component_json::Component;
 use log::error;
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
@@ -12,10 +14,20 @@ pub enum MineChatError {
     #[diagnostic(code(minechat::io))]
     Io(#[from] io::Error),
 
-    /// Serde error. Contains the underlying JSON error.
+    /// Serde error. Contains the underlying CBOR error.
     #[error("Serde error: {0}")]
     #[diagnostic(code(minechat::serde))]
-    Serde(#[from] serde_json::Error),
+    Serde(#[from] serde_cbor::Error),
+
+    /// Serde JSON error. Contains the underlying JSON error.
+    #[error("Serde JSON error: {0}")]
+    #[diagnostic(code(minechat::serde_json))]
+    SerdeJson(#[from] serde_json::Error),
+
+    /// Zstd error.
+    #[error("Zstd error: {0}")]
+    #[diagnostic(code(minechat::zstd))]
+    Zstd(String),
 
     /// Server not linked.
     #[error("Server not linked")]
@@ -48,6 +60,12 @@ pub enum MineChatError {
     Disconnected,
 }
 
+#[async_trait]
+pub trait MessageStream {
+    async fn send_message(&mut self, msg: &MineChatMessage) -> Result<(), MineChatError>;
+    async fn receive_message(&mut self) -> Result<MineChatMessage, MineChatError>;
+}
+
 /// The different types of messages that can be sent and received in the MineChat protocol.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -74,7 +92,7 @@ pub enum MineChatMessage {
 }
 
 /// The payload for an authentication message.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct AuthPayload {
     /// The client's UUID.
     pub client_uuid: String,
@@ -83,7 +101,7 @@ pub struct AuthPayload {
 }
 
 /// The payload for an authentication acknowledgment message.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct AuthAckPayload {
     /// The status of the authentication (either "success" or "failure").
     pub status: String,
@@ -99,7 +117,7 @@ pub struct AuthAckPayload {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChatPayload {
     /// The text of the chat message.
-    pub message: String,
+    pub message: Component,
 }
 
 /// The payload for a broadcast message.
@@ -108,12 +126,59 @@ pub struct BroadcastPayload {
     /// The name of the sender.
     pub from: String,
     /// The text of the broadcast message.
-    pub message: String,
+    pub message: Component,
 }
 
 /// The payload for a disconnect message.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct DisconnectPayload {
     /// The reason for the disconnection.
     pub reason: String,
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kyori_component_json::Component;
+
+    #[test]
+    fn test_auth_message_serialization() {
+        let msg = MineChatMessage::Auth {
+            payload: AuthPayload {
+                client_uuid: "test-uuid".to_string(),
+                link_code: "test-code".to_string(),
+            },
+        };
+        let serialized = serde_cbor::to_vec(&msg).unwrap();
+        let deserialized: MineChatMessage = serde_cbor::from_slice(&serialized).unwrap();
+        
+        if let MineChatMessage::Auth { payload } = deserialized {
+            assert_eq!(payload.client_uuid, "test-uuid");
+            assert_eq!(payload.link_code, "test-code");
+        } else {
+            panic!("Deserialized message is not an Auth message");
+        }
+    }
+
+    #[test]
+    fn test_chat_message_serialization() {
+        let msg = MineChatMessage::Chat {
+            payload: ChatPayload {
+                message: Component::text("Hello, world!"),
+            },
+        };
+        let serialized = serde_cbor::to_vec(&msg).unwrap();
+        let deserialized: MineChatMessage = serde_cbor::from_slice(&serialized).unwrap();
+
+        if let MineChatMessage::Chat { payload } = deserialized {
+            if let Component::Object(obj) = payload.message {
+                assert_eq!(obj.text, Some("Hello, world!".to_string()));
+            } else {
+                panic!("Expected Component::Object");
+            }
+        } else {
+            panic!("Deserialized message is not a Chat message");
+        }
+    }
 }
