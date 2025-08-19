@@ -38,8 +38,8 @@
 //! use tokio::net::TcpStream;
 //! use kyori_component_json::Component;
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), MineChatError> {
+//! #[tokio::test]
+//! async fn example_send_chat_message() -> Result<(), MineChatError> {
 //!     let server_addr = "127.0.0.1:8080";
 //!     let stream = TcpStream::connect(server_addr).await?;
 //!     let mut message_stream = TokioMessageStream::new(stream);
@@ -52,7 +52,6 @@
 //!
 //!     message_stream.send_message(&chat_message).await?;
 //!     println!("Sent chat message.");
-//!
 //!     Ok(())
 //! }
 //! ```
@@ -63,8 +62,8 @@
 //! use minechat_protocol::{protocol::*, TokioMessageStream, MessageStream};
 //! use tokio::net::TcpStream;
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), MineChatError> {
+//! #[tokio::test]
+//! async fn example_receive_broadcast_message() -> Result<(), MineChatError> {
 //!     let server_addr = "127.0.0.1:8080";
 //!     let stream = TcpStream::connect(server_addr).await?;
 //!     let mut message_stream = TokioMessageStream::new(stream);
@@ -78,7 +77,6 @@
 //!             println!("Received other message type: {:?}", other_message);
 //!         }
 //!     }
-//!
 //!     Ok(())
 //! }
 //! ```
@@ -89,8 +87,8 @@
 //! use minechat_protocol::{protocol::*, packets::link_with_server, TokioMessageStream, MessageStream};
 //! use tokio::net::TcpStream;
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), MineChatError> {
+//! #[tokio::test]
+//! async fn example_authenticate_with_server() -> Result<(), MineChatError> {
 //!     let server_addr = "127.0.0.1:8080";
 //!     let stream = TcpStream::connect(server_addr).await?;
 //!     let mut message_stream = TokioMessageStream::new(stream);
@@ -104,7 +102,6 @@
 //!             eprintln!("Failed to link with server: {}", e);
 //!         }
 //!     }
-//!
 //!     Ok(())
 //! }
 //! ```
@@ -121,17 +118,13 @@
 //! [`MineChatMessage`]: crate::protocol::MineChatMessage
 //! [`TokioMessageStream`]: crate::packets::TokioMessageStream
 //! [`protocol`]: crate::protocol
-
 #![allow(dead_code)]
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
-
 /// Contains the implementation of the `TokioMessageStream` and the `link_with_server` function.
 pub mod packets;
 /// Contains the core protocol definitions, including message types, payloads, and the `MessageStream` trait.
 pub mod protocol;
-
 pub use protocol::MessageStream;
-
 #[cfg(feature = "tokio")]
 pub use packets::TokioMessageStream;
