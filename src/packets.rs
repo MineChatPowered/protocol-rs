@@ -1,9 +1,11 @@
 use crate::protocol::*;
-use async_trait::async_trait;
 use log::trace;
-use std::io::Cursor;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use uuid::Uuid;
+use std::io::Cursor;
+use async_trait::async_trait;
+
+#[cfg(feature = "tokio")]
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// A `MessageStream` implementation for Tokio asynchronous I/O streams.
 ///

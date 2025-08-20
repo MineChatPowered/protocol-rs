@@ -3,8 +3,8 @@ use kyori_component_json::Component;
 use log::error;
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
+use std::io;
 use thiserror::Error;
-use tokio::io;
 
 /// Errors that can occur during the operation of the MineChat protocol.
 #[derive(Debug, Error, Diagnostic)]
