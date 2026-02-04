@@ -22,6 +22,8 @@
 //! ## Examples
 //!
 //! ```rust,no_run
+//! # #[cfg(feature = "tokio")]
+//! # {
 //! use minechat_protocol::{TokioMessageStream, link_with_server, send_chat_message};
 //! use tokio::net::TcpStream;
 //!
@@ -38,6 +40,7 @@
 //!
 //!     Ok(())
 //! }
+//! # }
 //! ```
 //!
 //! ## Protocol Details
@@ -52,18 +55,29 @@
 //! [`MineChatPacket`]: crate::protocol::MineChatPacket
 //! [`TokioMessageStream`]: crate::packets::TokioMessageStream
 //! [`protocol`]: crate::protocol
-#![allow(dead_code)]
+
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
+/// Contains client-side protocol operations.
+pub mod client;
 /// Contains the implementation of the `TokioMessageStream` and packet handling functions.
 pub mod packets;
 /// Contains the core protocol definitions, including packet types, payloads, and the `MessageStream` trait.
 pub mod protocol;
+/// Contains stream implementations for different I/O backends.
+pub mod stream;
+/// Contains TLS implementations for secure communication.
+pub mod tls;
 
 // Re-export commonly used items
+#[cfg(feature = "tls-rustls")]
+pub use packets::RustlsTlsMessageStream;
+#[cfg(feature = "tls-native")]
+pub use packets::TlsMessageStream;
 #[cfg(feature = "tokio")]
 pub use packets::{
     TokioMessageStream, link_with_server, send_capabilities, send_chat_message, send_disconnect,
+    send_pong,
 };
 pub use protocol::{
     AuthOkPayload, CapabilitiesPayload, ChatMessagePayload, DisconnectPayload, LinkOkPayload,

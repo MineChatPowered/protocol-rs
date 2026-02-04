@@ -60,6 +60,10 @@ pub enum MineChatError {
     /// Invalid packet type.
     #[error("Invalid packet type: {0}")]
     InvalidPacketType(i32),
+
+    /// Invalid frame size.
+    #[error("Invalid frame size: {0}")]
+    InvalidFrameSize(i32),
 }
 
 /// A trait for sending and receiving `MineChatPacket`s over an asynchronous stream.
@@ -113,8 +117,8 @@ pub mod packet_types {
     pub const PONG: i32 = 0x07;
     /// MODERATION packet (Server → Client)
     pub const MODERATION: i32 = 0x08;
-    /// DISCONNECT packet (Bidirectional)
-    pub const DISCONNECT: i32 = 0x09;
+    /// DISCONNECT packet (Bidirectional) - Implementation-private
+    pub const DISCONNECT: i32 = 0x80;
 }
 
 /// Chat format constants
@@ -156,9 +160,47 @@ pub struct MineChatPacket {
     pub payload: Payload,
 }
 
-/// Packet payloads
+/// Raw payload data for type-safe deserialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Default)]
+pub struct RawPayload {
+    /// Optional linking code
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linking_code: Option<String>,
+    /// Optional client UUID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_uuid: Option<String>,
+    /// Optional Minecraft UUID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minecraft_uuid: Option<String>,
+    /// Optional supports_components flag
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_components: Option<bool>,
+    /// Optional format string
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    /// Optional content string
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// Optional timestamp
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_ms: Option<i64>,
+    /// Optional moderation action
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<i32>,
+    /// Optional moderation scope
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<i32>,
+    /// Optional reason
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Optional duration
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<i32>,
+}
+
+/// Packet payloads
+#[derive(Debug, Clone)]
 pub enum Payload {
     /// LINK payload
     Link(LinkPayload),
@@ -181,6 +223,113 @@ pub enum Payload {
     /// Empty payload
     Empty,
 }
+
+impl Serialize for Payload {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Payload::Link(p) => RawPayload {
+                linking_code: Some(p.linking_code.clone()),
+                client_uuid: Some(p.client_uuid.clone()),
+                ..Default::default()
+            }
+            .serialize(serializer),
+            Payload::LinkOk(p) => RawPayload {
+                minecraft_uuid: Some(p.minecraft_uuid.clone()),
+                ..Default::default()
+            }
+            .serialize(serializer),
+            Payload::Capabilities(p) => RawPayload {
+                supports_components: Some(p.supports_components),
+                ..Default::default()
+            }
+            .serialize(serializer),
+            Payload::AuthOk(_) => RawPayload::default().serialize(serializer),
+            Payload::ChatMessage(p) => RawPayload {
+                format: Some(p.format.clone()),
+                content: Some(p.content.clone()),
+                ..Default::default()
+            }
+            .serialize(serializer),
+            Payload::Ping(p) => RawPayload {
+                timestamp_ms: Some(p.timestamp_ms),
+                ..Default::default()
+            }
+            .serialize(serializer),
+            Payload::Pong(p) => RawPayload {
+                timestamp_ms: Some(p.timestamp_ms),
+                ..Default::default()
+            }
+            .serialize(serializer),
+            Payload::Moderation(p) => RawPayload {
+                action: Some(p.action),
+                scope: Some(p.scope),
+                reason: p.reason.clone(),
+                duration_seconds: p.duration_seconds,
+                ..Default::default()
+            }
+            .serialize(serializer),
+            Payload::Disconnect(p) => RawPayload {
+                reason: Some(p.reason.clone()),
+                ..Default::default()
+            }
+            .serialize(serializer),
+            Payload::Empty => RawPayload::default().serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Payload {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawPayload::deserialize(deserializer)?;
+
+        // Try to determine payload type based on present fields
+        if raw.linking_code.is_some() && raw.client_uuid.is_some() {
+            Ok(Payload::Link(LinkPayload {
+                linking_code: raw.linking_code.unwrap(),
+                client_uuid: raw.client_uuid.unwrap(),
+            }))
+        } else if raw.minecraft_uuid.is_some() {
+            Ok(Payload::LinkOk(LinkOkPayload {
+                minecraft_uuid: raw.minecraft_uuid.unwrap(),
+            }))
+        } else if raw.supports_components.is_some() {
+            Ok(Payload::Capabilities(CapabilitiesPayload {
+                supports_components: raw.supports_components.unwrap(),
+            }))
+        } else if raw.format.is_some() && raw.content.is_some() {
+            Ok(Payload::ChatMessage(ChatMessagePayload {
+                format: raw.format.unwrap(),
+                content: raw.content.unwrap(),
+            }))
+        } else if raw.timestamp_ms.is_some() {
+            // Need context to distinguish between Ping and Pong
+            // For now, default to Ping
+            Ok(Payload::Ping(PingPayload {
+                timestamp_ms: raw.timestamp_ms.unwrap(),
+            }))
+        } else if raw.action.is_some() && raw.scope.is_some() {
+            Ok(Payload::Moderation(ModerationPayload {
+                action: raw.action.unwrap(),
+                scope: raw.scope.unwrap(),
+                reason: raw.reason.clone(),
+                duration_seconds: raw.duration_seconds,
+            }))
+        } else if raw.reason.is_some() {
+            Ok(Payload::Disconnect(DisconnectPayload {
+                reason: raw.reason.unwrap(),
+            }))
+        } else {
+            Ok(Payload::Empty)
+        }
+    }
+}
+
 
 /// LINK payload (0x01)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,7 +394,7 @@ pub struct ModerationPayload {
     pub duration_seconds: Option<i32>,
 }
 
-/// DISCONNECT payload (0x09)
+/// DISCONNECT payload (0x80) - Implementation-private
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisconnectPayload {
     /// The reason for disconnection
@@ -290,11 +439,12 @@ mod tests {
         let deserialized: MineChatPacket = serde_cbor::from_slice(&serialized).unwrap();
 
         assert_eq!(deserialized.packet_type, packet_types::CHAT_MESSAGE);
-        if let Payload::ChatMessage(payload) = deserialized.payload {
-            assert_eq!(payload.format, chat_format::COMMONMARK);
-            assert_eq!(payload.content, "Hello, world!");
-        } else {
-            panic!("Deserialized payload is not ChatMessage");
+        match deserialized.payload {
+            Payload::ChatMessage(payload) => {
+                assert_eq!(payload.format, chat_format::COMMONMARK);
+                assert_eq!(payload.content, "Hello, world!");
+            }
+            other => panic!("Deserialized payload is not ChatMessage: {:?}", other),
         }
     }
 
