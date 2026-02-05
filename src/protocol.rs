@@ -161,8 +161,7 @@ pub struct MineChatPacket {
 }
 
 /// Raw payload data for type-safe deserialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RawPayload {
     /// Optional linking code
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -329,7 +328,6 @@ impl<'de> Deserialize<'de> for Payload {
         }
     }
 }
-
 
 /// LINK payload (0x01)
 #[derive(Debug, Clone, Serialize, Deserialize)]
