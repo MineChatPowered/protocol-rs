@@ -27,7 +27,6 @@ rustls = { version = "0.23", optional = true }
 tokio-rustls = { version = "0.26", optional = true }
 x509-parser = { version = "0.17", optional = true }
 base64 = { version = "0.22", optional = true }
-rustls-native-certs = { version = "0.7", optional = true }
 uuid = { version = "1.15.1", features = ["v4"] }
 zstd = "0.13.2"
 
@@ -35,5 +34,5 @@ zstd = "0.13.2"
 default = []
 tokio = ["dep:tokio"]
 tls-native = ["tokio", "dep:tokio-native-tls", "dep:native-tls"]
-tls-rustls = ["tokio", "dep:rustls", "dep:tokio-rustls", "dep:x509-parser", "dep:base64", "dep:rustls-native-certs"]
+tls-rustls = ["tokio", "dep:rustls", "dep:tokio-rustls", "dep:x509-parser", "dep:base64"]
 cert-pinning = ["tls-rustls"]

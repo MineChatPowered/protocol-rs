@@ -1,26 +1,71 @@
 use crate::types::MessageContent;
 use miette::Diagnostic;
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 use uuid::Uuid;
+
+/// Packet type constants as defined in the MineChat protocol specification.
+pub mod packet_type {
+    /// `LINK` packet type (0x01) - Client → Server
+    pub const LINK: i32 = 0x01;
+    /// `LINK_OK` packet type (0x02) - Server → Client
+    pub const LINK_OK: i32 = 0x02;
+    /// `CAPABILITIES` packet type (0x03) - Client → Server
+    pub const CAPABILITIES: i32 = 0x03;
+    /// `AUTH_OK` packet type (0x04) - Server → Client
+    pub const AUTH_OK: i32 = 0x04;
+    /// `CHAT_MESSAGE` packet type (0x05) - Bidirectional
+    pub const CHAT_MESSAGE: i32 = 0x05;
+    /// `PING` packet type (0x06) - Bidirectional
+    pub const PING: i32 = 0x06;
+    /// `PONG` packet type (0x07) - Bidirectional
+    pub const PONG: i32 = 0x07;
+    /// `MODERATION` packet type (0x08) - Server → Client
+    pub const MODERATION: i32 = 0x08;
+    /// `DISCONNECT` packet type (0x80) - Bidirectional (Implementation-private)
+    pub const DISCONNECT: i32 = 0x80;
+}
 
 /// Error type for packet validation
 #[derive(Debug, Error, Diagnostic)]
 pub enum ValidationError {
+    /// Invalid message format
     #[error("Invalid message format: {format}")]
-    InvalidMessageFormat { format: String },
+    InvalidMessageFormat {
+        /// The invalid format value
+        format: String,
+    },
 
+    /// Invalid UUID format
     #[error("Invalid UUID: {value}")]
-    InvalidUuid { value: String },
+    InvalidUuid {
+        /// The invalid UUID value
+        value: String,
+    },
 
+    /// Invalid moderation action value
     #[error("Invalid moderation action: {action} (must be 0-3)")]
-    InvalidAction { action: i32 },
+    InvalidAction {
+        /// The invalid action value
+        action: i32,
+    },
 
+    /// Invalid moderation scope value
     #[error("Invalid moderation scope: {scope} (must be 0-1)")]
-    InvalidScope { scope: i32 },
+    InvalidScope {
+        /// The invalid scope value
+        scope: i32,
+    },
 
+    /// Message content exceeds maximum size
     #[error("Message too large: {size} bytes (max: {max_size})")]
-    MessageTooLarge { size: usize, max_size: usize },
+    MessageTooLarge {
+        /// Actual message size in bytes
+        size: usize,
+        /// Maximum allowed size in bytes
+        max_size: usize,
+    },
 }
 
 /// Chat format constants with validation
@@ -28,14 +73,18 @@ pub enum ValidationError {
 pub struct MessageFormat(String);
 
 impl MessageFormat {
+    /// Creates a CommonMark message format
     pub fn commonmark() -> Self {
         Self("commonmark".to_string())
     }
 
+    /// Creates a Components (rich text) message format
     pub fn components() -> Self {
         Self("components".to_string())
     }
 
+    /// Creates a MessageFormat from a string value
+    /// Returns ValidationError if the value is not "commonmark" or "components"
     pub fn new(value: String) -> Result<Self, ValidationError> {
         match value.as_str() {
             "commonmark" | "components" => Ok(Self(value)),
@@ -43,103 +92,375 @@ impl MessageFormat {
         }
     }
 
+    /// Returns the string representation of this format
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 /// A MineChat packet with proper type tagging to fix deserialization ambiguity
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "packet_type", content = "payload", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MineChatPacket {
-    /// LINK packet (0x01) - Client → Server
+    /// `LINK` packet (0x01) - Client → Server
     Link {
+        /// The linking code from the Minecraft server
         linking_code: LinkCode,
+        /// The client UUID identifying this device
         client_uuid: ClientUuid,
     },
 
-    /// LINK_OK packet (0x02) - Server → Client
-    LinkOk { minecraft_uuid: MinecraftUuid },
+    /// `LINK_OK` packet (0x02) - Server → Client
+    LinkOk {
+        /// The Minecraft UUID of the linked account
+        minecraft_uuid: MinecraftUuid,
+    },
 
-    /// CAPABILITIES packet (0x03) - Client → Server
-    Capabilities { supports_components: bool },
+    /// `CAPABILITIES` packet (0x03) - Client → Server
+    Capabilities {
+        /// Whether the client supports rich text components
+        supports_components: bool,
+    },
 
-    /// AUTH_OK packet (0x04) - Server → Client
+    /// `AUTH_OK` packet (0x04) - Server → Client
     AuthOk,
 
-    /// CHAT_MESSAGE packet (0x05) - Bidirectional
-    #[serde(deserialize_with = "deserialize_chat_message")]
+    /// `CHAT_MESSAGE` packet (0x05) - Bidirectional
     ChatMessage {
+        /// The message format ("commonmark" or "components")
         format: MessageFormat,
+        /// The message content
         content: MessageContent,
     },
 
-    /// PING packet (0x06) - Bidirectional
-    Ping { timestamp_ms: i64 },
+    /// `PING` packet (0x06) - Bidirectional
+    Ping {
+        /// Timestamp in milliseconds
+        timestamp_ms: i64,
+    },
 
-    /// PONG packet (0x07) - Bidirectional
-    Pong { timestamp_ms: i64 },
+    /// `PONG` packet (0x07) - Bidirectional
+    Pong {
+        /// Timestamp in milliseconds (should match the corresponding PING)
+        timestamp_ms: i64,
+    },
 
-    /// MODERATION packet (0x08) - Server → Client
-    #[serde(deserialize_with = "deserialize_moderation")]
+    /// `MODERATION` packet (0x08) - Server → Client
     Moderation {
+        /// The moderation action (0=warn, 1=mute, 2=kick, 3=ban)
         action: ModerationAction,
+        /// The scope of the moderation (0=client, 1=account)
         scope: ModerationScope,
+        /// Optional reason for the moderation action
         reason: Option<String>,
+        /// Optional duration in seconds (for mute/ban)
         duration_seconds: Option<i32>,
     },
 
-    /// DISCONNECT packet (0x80) - Implementation-private
-    Disconnect { reason: String },
+    /// `DISCONNECT` packet (0x80) - Implementation-private
+    Disconnect {
+        /// The reason for disconnection
+        reason: String,
+    },
 }
 
-/// Context-aware deserializer for ChatMessage
-fn deserialize_chat_message<'de, D>(
-    deserializer: D,
-) -> Result<(MessageFormat, MessageContent), D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    struct ChatMessageHelper {
-        format: MessageFormat,
-        content: MessageContent,
-    }
+impl Serialize for MineChatPacket {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let packet_type = match self {
+            MineChatPacket::Link { .. } => packet_type::LINK,
+            MineChatPacket::LinkOk { .. } => packet_type::LINK_OK,
+            MineChatPacket::Capabilities { .. } => packet_type::CAPABILITIES,
+            MineChatPacket::AuthOk => packet_type::AUTH_OK,
+            MineChatPacket::ChatMessage { .. } => packet_type::CHAT_MESSAGE,
+            MineChatPacket::Ping { .. } => packet_type::PING,
+            MineChatPacket::Pong { .. } => packet_type::PONG,
+            MineChatPacket::Moderation { .. } => packet_type::MODERATION,
+            MineChatPacket::Disconnect { .. } => packet_type::DISCONNECT,
+        };
 
-    let helper = ChatMessageHelper::deserialize(deserializer)?;
-    Ok((helper.format, helper.content))
+        let mut map = serializer.serialize_map(Some(2))?;
+        map.serialize_entry(&0, &packet_type)?;
+
+        map.serialize_entry(&1, &Payload::from_packet(self))?;
+        map.end()
+    }
 }
 
-/// Context-aware deserializer for Moderation
-fn deserialize_moderation<'de, D>(
-    deserializer: D,
-) -> Result<
-    (
-        ModerationAction,
-        ModerationScope,
-        Option<String>,
-        Option<i32>,
-    ),
-    D::Error,
->
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    struct ModerationHelper {
-        action: ModerationAction,
-        scope: ModerationScope,
-        reason: Option<String>,
-        duration_seconds: Option<i32>,
+impl<'de> Deserialize<'de> for MineChatPacket {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Envelope {
+            #[serde(rename = "0")]
+            packet_type: i32,
+            #[serde(rename = "1")]
+            payload: Payload,
+        }
+
+        let envelope = Envelope::deserialize(deserializer)?;
+        envelope.payload.to_packet(envelope.packet_type)
+    }
+}
+
+/// Internal payload representation for CBOR serialization (uses string keys per spec)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Payload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    linking_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    client_uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    minecraft_uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    supports_components: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    timestamp_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    action: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    duration_seconds: Option<i32>,
+}
+
+impl Payload {
+    /// Convert from a MineChatPacket to a serializable Payload
+    pub fn from_packet(packet: &MineChatPacket) -> Self {
+        match packet {
+            MineChatPacket::Link {
+                linking_code,
+                client_uuid,
+            } => Payload {
+                linking_code: Some(linking_code.as_str().to_string()),
+                client_uuid: Some(client_uuid.as_str().to_string()),
+                minecraft_uuid: None,
+                supports_components: None,
+                format: None,
+                content: None,
+                timestamp_ms: None,
+                action: None,
+                scope: None,
+                reason: None,
+                duration_seconds: None,
+            },
+            MineChatPacket::LinkOk { minecraft_uuid } => Payload {
+                linking_code: None,
+                client_uuid: None,
+                minecraft_uuid: Some(minecraft_uuid.as_str().to_string()),
+                supports_components: None,
+                format: None,
+                content: None,
+                timestamp_ms: None,
+                action: None,
+                scope: None,
+                reason: None,
+                duration_seconds: None,
+            },
+            MineChatPacket::Capabilities {
+                supports_components,
+            } => Payload {
+                linking_code: None,
+                client_uuid: None,
+                minecraft_uuid: None,
+                supports_components: Some(*supports_components),
+                format: None,
+                content: None,
+                timestamp_ms: None,
+                action: None,
+                scope: None,
+                reason: None,
+                duration_seconds: None,
+            },
+            MineChatPacket::AuthOk => Payload {
+                linking_code: None,
+                client_uuid: None,
+                minecraft_uuid: None,
+                supports_components: None,
+                format: None,
+                content: None,
+                timestamp_ms: None,
+                action: None,
+                scope: None,
+                reason: None,
+                duration_seconds: None,
+            },
+            MineChatPacket::ChatMessage { format, content } => Payload {
+                linking_code: None,
+                client_uuid: None,
+                minecraft_uuid: None,
+                supports_components: None,
+                format: Some(format.as_str().to_string()),
+                content: Some(content.to_cbor_string()),
+                timestamp_ms: None,
+                action: None,
+                scope: None,
+                reason: None,
+                duration_seconds: None,
+            },
+            MineChatPacket::Ping { timestamp_ms } => Payload {
+                linking_code: None,
+                client_uuid: None,
+                minecraft_uuid: None,
+                supports_components: None,
+                format: None,
+                content: None,
+                timestamp_ms: Some(*timestamp_ms),
+                action: None,
+                scope: None,
+                reason: None,
+                duration_seconds: None,
+            },
+            MineChatPacket::Pong { timestamp_ms } => Payload {
+                linking_code: None,
+                client_uuid: None,
+                minecraft_uuid: None,
+                supports_components: None,
+                format: None,
+                content: None,
+                timestamp_ms: Some(*timestamp_ms),
+                action: None,
+                scope: None,
+                reason: None,
+                duration_seconds: None,
+            },
+            MineChatPacket::Moderation {
+                action,
+                scope,
+                reason,
+                duration_seconds,
+            } => Payload {
+                linking_code: None,
+                client_uuid: None,
+                minecraft_uuid: None,
+                supports_components: None,
+                format: None,
+                content: None,
+                timestamp_ms: None,
+                action: Some(action.value()),
+                scope: Some(scope.value()),
+                reason: reason.clone(),
+                duration_seconds: *duration_seconds,
+            },
+            MineChatPacket::Disconnect { reason } => Payload {
+                linking_code: None,
+                client_uuid: None,
+                minecraft_uuid: None,
+                supports_components: None,
+                format: None,
+                content: None,
+                timestamp_ms: None,
+                action: None,
+                scope: None,
+                reason: Some(reason.clone()),
+                duration_seconds: None,
+            },
+        }
     }
 
-    let helper = ModerationHelper::deserialize(deserializer)?;
-    Ok((
-        helper.action,
-        helper.scope,
-        helper.reason,
-        helper.duration_seconds,
-    ))
+    /// Convert from a Payload to a MineChatPacket using packet_type context
+    pub fn to_packet<E>(self, packet_type: i32) -> Result<MineChatPacket, E>
+    where
+        E: serde::de::Error,
+    {
+        match packet_type {
+            _ if packet_type == packet_type::LINK => {
+                let linking_code = self
+                    .linking_code
+                    .ok_or_else(|| serde::de::Error::missing_field("linking_code"))?;
+                let client_uuid = self
+                    .client_uuid
+                    .ok_or_else(|| serde::de::Error::missing_field("client_uuid"))?;
+                Ok(MineChatPacket::Link {
+                    linking_code: LinkCode::new(linking_code).map_err(|e| {
+                        serde::de::Error::custom(format!("invalid linking_code: {}", e))
+                    })?,
+                    client_uuid: ClientUuid::new(client_uuid).map_err(|e| {
+                        serde::de::Error::custom(format!("invalid client_uuid: {}", e))
+                    })?,
+                })
+            }
+            _ if packet_type == packet_type::LINK_OK => {
+                let minecraft_uuid = self
+                    .minecraft_uuid
+                    .ok_or_else(|| serde::de::Error::missing_field("minecraft_uuid"))?;
+                Ok(MineChatPacket::LinkOk {
+                    minecraft_uuid: MinecraftUuid::new(minecraft_uuid).map_err(|e| {
+                        serde::de::Error::custom(format!("invalid minecraft_uuid: {}", e))
+                    })?,
+                })
+            }
+            _ if packet_type == packet_type::CAPABILITIES => {
+                let supports_components = self.supports_components.unwrap_or(false);
+                Ok(MineChatPacket::Capabilities {
+                    supports_components,
+                })
+            }
+            _ if packet_type == packet_type::AUTH_OK => Ok(MineChatPacket::AuthOk),
+            _ if packet_type == packet_type::CHAT_MESSAGE => {
+                let format = self
+                    .format
+                    .ok_or_else(|| serde::de::Error::missing_field("format"))?;
+                let content = self
+                    .content
+                    .ok_or_else(|| serde::de::Error::missing_field("content"))?;
+                let format_str = format.clone();
+                Ok(MineChatPacket::ChatMessage {
+                    format: MessageFormat::new(format)
+                        .map_err(|e| serde::de::Error::custom(format!("invalid format: {}", e)))?,
+                    content: if format_str == "components" {
+                        MessageContent::Components(
+                            serde_json::from_str(&content)
+                                .unwrap_or_else(|_| kyori_component_json::Component::text(content)),
+                        )
+                    } else {
+                        MessageContent::CommonMark(content)
+                    },
+                })
+            }
+            _ if packet_type == packet_type::PING => {
+                let timestamp_ms = self.timestamp_ms.unwrap_or(0);
+                Ok(MineChatPacket::Ping { timestamp_ms })
+            }
+            _ if packet_type == packet_type::PONG => {
+                let timestamp_ms = self.timestamp_ms.unwrap_or(0);
+                Ok(MineChatPacket::Pong { timestamp_ms })
+            }
+            _ if packet_type == packet_type::MODERATION => {
+                let action = self
+                    .action
+                    .ok_or_else(|| serde::de::Error::missing_field("action"))?;
+                let scope = self
+                    .scope
+                    .ok_or_else(|| serde::de::Error::missing_field("scope"))?;
+                Ok(MineChatPacket::Moderation {
+                    action: ModerationAction::new(action)
+                        .map_err(|e| serde::de::Error::custom(format!("invalid action: {}", e)))?,
+                    scope: ModerationScope::new(scope)
+                        .map_err(|e| serde::de::Error::custom(format!("invalid scope: {}", e)))?,
+                    reason: self.reason,
+                    duration_seconds: self.duration_seconds,
+                })
+            }
+            _ if packet_type == packet_type::DISCONNECT => {
+                let reason = self.reason.unwrap_or_default();
+                Ok(MineChatPacket::Disconnect { reason })
+            }
+            _ => Err(serde::de::Error::custom(format!(
+                "unknown packet type: {}",
+                packet_type
+            ))),
+        }
+    }
 }
 
 /// Newtype for Link Codes with validation
@@ -147,6 +468,8 @@ where
 pub struct LinkCode(String);
 
 impl LinkCode {
+    /// Creates a new LinkCode from a string
+    /// Returns ValidationError if the code is empty or too long
     pub fn new(code: String) -> Result<Self, ValidationError> {
         if code.trim().is_empty() {
             return Err(ValidationError::InvalidMessageFormat {
@@ -162,6 +485,7 @@ impl LinkCode {
         Ok(Self(code))
     }
 
+    /// Returns the string representation of this link code
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -172,6 +496,8 @@ impl LinkCode {
 pub struct ClientUuid(String);
 
 impl ClientUuid {
+    /// Creates a new ClientUuid from a string
+    /// Returns ValidationError if the string is not a valid UUID
     pub fn new(uuid: String) -> Result<Self, ValidationError> {
         // Validate UUID format
         Uuid::parse_str(&uuid).map_err(|_| ValidationError::InvalidUuid {
@@ -180,10 +506,12 @@ impl ClientUuid {
         Ok(Self(uuid))
     }
 
+    /// Generates a new random ClientUuid
     pub fn generate() -> Self {
         Self(Uuid::new_v4().to_string())
     }
 
+    /// Returns the string representation of this UUID
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -194,6 +522,8 @@ impl ClientUuid {
 pub struct MinecraftUuid(String);
 
 impl MinecraftUuid {
+    /// Creates a new MinecraftUuid from a string
+    /// Returns ValidationError if the string is not a valid UUID
     pub fn new(uuid: String) -> Result<Self, ValidationError> {
         // Validate UUID format
         Uuid::parse_str(&uuid).map_err(|_| ValidationError::InvalidUuid {
@@ -202,6 +532,7 @@ impl MinecraftUuid {
         Ok(Self(uuid))
     }
 
+    /// Returns the string representation of this UUID
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -212,11 +543,17 @@ impl MinecraftUuid {
 pub struct ModerationAction(i32);
 
 impl ModerationAction {
+    /// Warn action (0)
     pub const WARN: Self = Self(0);
+    /// Mute action (1)
     pub const MUTE: Self = Self(1);
+    /// Kick action (2)
     pub const KICK: Self = Self(2);
+    /// Ban action (3)
     pub const BAN: Self = Self(3);
 
+    /// Creates a new ModerationAction from an i32
+    /// Returns ValidationError if the value is not 0-3
     pub fn new(action: i32) -> Result<Self, ValidationError> {
         match action {
             0..=3 => Ok(Self(action)),
@@ -224,6 +561,7 @@ impl ModerationAction {
         }
     }
 
+    /// Returns the integer value of this action
     pub fn value(&self) -> i32 {
         self.0
     }
@@ -234,9 +572,13 @@ impl ModerationAction {
 pub struct ModerationScope(i32);
 
 impl ModerationScope {
+    /// Client scope (0) - affects only the current device
     pub const CLIENT: Self = Self(0);
+    /// Account scope (1) - affects the entire Minecraft account
     pub const ACCOUNT: Self = Self(1);
 
+    /// Creates a new ModerationScope from an i32
+    /// Returns ValidationError if the value is not 0-1
     pub fn new(scope: i32) -> Result<Self, ValidationError> {
         match scope {
             0..=1 => Ok(Self(scope)),
@@ -244,6 +586,7 @@ impl ModerationScope {
         }
     }
 
+    /// Returns the integer value of this scope
     pub fn value(&self) -> i32 {
         self.0
     }

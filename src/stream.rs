@@ -1,5 +1,9 @@
 #[cfg(feature = "tokio")]
-use crate::protocol::{MessageStream, MineChatError, MineChatPacket};
+use crate::packets::MineChatPacket;
+#[cfg(feature = "tokio")]
+use crate::protocol::{MessageStream, MineChatError};
+#[cfg(feature = "tokio")]
+use async_trait::async_trait;
 #[cfg(feature = "tokio")]
 use log::trace;
 #[cfg(feature = "tokio")]
@@ -48,11 +52,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> MessageStream for TokioMessageStr
     /// or if serialization/compression fails.
     async fn send_packet(&mut self, packet: &MineChatPacket) -> Result<(), MineChatError> {
         trace!("Serializing packet {:?}", packet);
+
         let serialized = serde_cbor::to_vec(packet)?;
-        let compressed = zstd::encode_all(Cursor::new(&serialized), 0)
+        let compressed = zstd::encode_all(Cursor::new(&serialized), 3)
             .map_err(|e| MineChatError::Zstd(e.to_string()))?;
 
-        // Validate sizes are positive (per spec requirement)
         if serialized.len() > i32::MAX as usize {
             return Err(MineChatError::InvalidFrameSize(serialized.len() as i32));
         }
@@ -61,7 +65,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> MessageStream for TokioMessageStr
         }
 
         trace!("Sending packet to server");
-        // Write big-endian signed integers as required by spec
         self.stream.write_i32(serialized.len() as i32).await?;
         self.stream.write_i32(compressed.len() as i32).await?;
         self.stream.write_all(&compressed).await?;
@@ -79,11 +82,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> MessageStream for TokioMessageStr
     /// Returns a `MineChatError` if an I/O error occurs during reading,
     /// or if decompression/deserialization fails.
     async fn receive_packet(&mut self) -> Result<MineChatPacket, MineChatError> {
-        // Read big-endian signed integers as required by spec
         let decompressed_len = self.stream.read_i32().await?;
         let compressed_len = self.stream.read_i32().await?;
 
-        // Validate sizes are positive (per spec: negative or zero sizes MUST terminate connection)
         if decompressed_len <= 0 || compressed_len <= 0 {
             return Err(MineChatError::InvalidFrameSize(decompressed_len));
         }
@@ -94,14 +95,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> MessageStream for TokioMessageStr
         let decompressed = zstd::stream::decode_all(Cursor::new(compressed))
             .map_err(|e| MineChatError::Zstd(e.to_string()))?;
 
-        // Validate decompressed size matches expected size (per spec requirement)
         if decompressed.len() != decompressed_len as usize {
             return Err(MineChatError::Zstd(
                 "Decompressed size mismatch".to_string(),
             ));
         }
 
-        let packet = serde_cbor::from_slice(&decompressed)?;
+        let packet: MineChatPacket = serde_cbor::from_slice(&decompressed)?;
         Ok(packet)
     }
 }

@@ -32,6 +32,17 @@ impl MessageContent {
             }
         }
     }
+
+    /// Returns a string representation for CBOR serialization
+    /// For Components, this serializes to JSON string
+    pub fn to_cbor_string(&self) -> String {
+        match self {
+            MessageContent::CommonMark(text) => text.clone(),
+            MessageContent::Components(component) => {
+                serde_json::to_string(component).unwrap_or_default()
+            }
+        }
+    }
 }
 
 #[cfg(test)]

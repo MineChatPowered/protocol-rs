@@ -1,19 +1,20 @@
-use crate::protocol::{
-    CapabilitiesPayload, ChatMessagePayload, DisconnectPayload, LinkPayload, MessageStream,
-    MineChatError, MineChatPacket, Payload, PongPayload, packet_types,
-};
+//! Client-side protocol operations.
+
+use crate::packets::{ClientUuid, LinkCode, MessageFormat, MineChatPacket};
+use crate::protocol::{MessageStream, MineChatError};
+use crate::types::MessageContent;
 use log::trace;
 use uuid::Uuid;
 
 /// Attempts to link with the server using the provided link code.
 ///
-/// This function generates a new client UUID (if reconnection), sends a `LINK` message to the server
-/// with the client UUID and link code, and then waits for a `LINK_OK` response.
-/// If the linking is successful, it returns the client UUID and Minecraft UUID.
+/// This function sends a `LINK` message to the server with the client UUID and link code,
+/// and then waits for a `LINK_OK` response.
 ///
 /// # Arguments
 ///
 /// * `message_stream` - A mutable reference to a message stream implementing `MessageStream`.
+/// * `client_uuid` - The client UUID. If None, a new UUID will be generated (for new linking).
 /// * `code` - The link code to authenticate with the server. Empty string for reconnection.
 ///
 /// # Returns
@@ -23,43 +24,65 @@ use uuid::Uuid;
 /// or any other error occurs during packet sending/receiving.
 pub async fn link_with_server(
     message_stream: &mut (dyn MessageStream + Unpin + Send),
+    client_uuid: Option<String>,
     code: impl AsRef<str>,
 ) -> Result<(String, String), MineChatError> {
     let link_code = code.as_ref();
 
-    // If code is empty (reconnection), we need to load the existing client UUID
-    // For now, generate a new one if code is not empty
-    let client_uuid = if link_code.is_empty() {
-        // In a real implementation, this would load the existing client UUID
-        // For now, we'll use a placeholder that the server should handle
-        "reconnection-placeholder".to_string()
-    } else {
-        Uuid::new_v4().to_string()
+    let client_uuid_str = match client_uuid {
+        Some(uuid) => uuid,
+        None if link_code.is_empty() => {
+            return Err(MineChatError::AuthFailed(
+                "Reconnection requires a client UUID".to_string(),
+            ));
+        }
+        None => Uuid::new_v4().to_string(),
     };
 
     trace!("Sending LINK packet to server");
-    let link_packet = MineChatPacket {
-        packet_type: packet_types::LINK,
-        payload: Payload::Link(LinkPayload {
-            linking_code: link_code.to_string(),
-            client_uuid: client_uuid.clone(),
-        }),
+    let link_packet = MineChatPacket::Link {
+        linking_code: LinkCode::new(link_code.to_string())
+            .map_err(|e| MineChatError::ConfigError(format!("invalid link code: {}", e)))?,
+        client_uuid: ClientUuid::new(client_uuid_str.clone())
+            .map_err(|e| MineChatError::ConfigError(format!("invalid client UUID: {}", e)))?,
     };
 
     message_stream.send_packet(&link_packet).await?;
 
     match message_stream.receive_packet().await? {
-        MineChatPacket {
-            packet_type: packet_types::LINK_OK,
-            payload: Payload::LinkOk(payload),
-        } => {
+        MineChatPacket::LinkOk { minecraft_uuid } => {
             trace!(
                 "Linked successfully with Minecraft UUID: {}",
-                payload.minecraft_uuid
+                minecraft_uuid.as_str()
             );
-            Ok((client_uuid, payload.minecraft_uuid))
+            Ok((client_uuid_str, minecraft_uuid.as_str().to_string()))
         }
         _ => Err(MineChatError::AuthFailed("Unexpected response".into())),
+    }
+}
+
+/// Waits for and validates an AUTH_OK packet from the server.
+///
+/// This should be called after sending CAPABILITIES to complete the authentication flow.
+///
+/// # Arguments
+///
+/// * `message_stream` - A mutable reference to a message stream implementing `MessageStream`.
+///
+/// # Returns
+///
+/// `Ok(())` if AUTH_OK was received successfully.
+/// `Err(MineChatError)` if authentication fails or times out.
+pub async fn wait_auth_ok(
+    message_stream: &mut (dyn MessageStream + Unpin + Send),
+) -> Result<(), MineChatError> {
+    trace!("Waiting for AUTH_OK packet");
+    match message_stream.receive_packet().await? {
+        MineChatPacket::AuthOk => {
+            trace!("Received AUTH_OK, authentication complete");
+            Ok(())
+        }
+        _ => Err(MineChatError::AuthFailed("Expected AUTH_OK".into())),
     }
 }
 
@@ -78,11 +101,8 @@ pub async fn send_capabilities(
     supports_components: bool,
 ) -> Result<(), MineChatError> {
     trace!("Sending CAPABILITIES packet");
-    let capabilities_packet = MineChatPacket {
-        packet_type: packet_types::CAPABILITIES,
-        payload: Payload::Capabilities(CapabilitiesPayload {
-            supports_components,
-        }),
+    let capabilities_packet = MineChatPacket::Capabilities {
+        supports_components,
     };
 
     message_stream.send_packet(&capabilities_packet).await
@@ -105,12 +125,10 @@ pub async fn send_chat_message(
     content: &str,
 ) -> Result<(), MineChatError> {
     trace!("Sending CHAT_MESSAGE packet: {}", content);
-    let chat_packet = MineChatPacket {
-        packet_type: packet_types::CHAT_MESSAGE,
-        payload: Payload::ChatMessage(ChatMessagePayload {
-            format: format.to_string(),
-            content: content.to_string(),
-        }),
+    let chat_packet = MineChatPacket::ChatMessage {
+        format: MessageFormat::new(format.to_string())
+            .map_err(|e| MineChatError::ConfigError(format!("invalid format: {}", e)))?,
+        content: MessageContent::CommonMark(content.to_string()),
     };
 
     message_stream.send_packet(&chat_packet).await
@@ -131,11 +149,8 @@ pub async fn send_disconnect(
     reason: &str,
 ) -> Result<(), MineChatError> {
     trace!("Sending DISCONNECT packet: {}", reason);
-    let disconnect_packet = MineChatPacket {
-        packet_type: packet_types::DISCONNECT,
-        payload: Payload::Disconnect(DisconnectPayload {
-            reason: reason.to_string(),
-        }),
+    let disconnect_packet = MineChatPacket::Disconnect {
+        reason: reason.to_string(),
     };
 
     message_stream.send_packet(&disconnect_packet).await
@@ -156,10 +171,7 @@ pub async fn send_pong(
     timestamp_ms: i64,
 ) -> Result<(), MineChatError> {
     trace!("Sending PONG packet: {}", timestamp_ms);
-    let pong_packet = MineChatPacket {
-        packet_type: packet_types::PONG,
-        payload: Payload::Pong(PongPayload { timestamp_ms }),
-    };
+    let pong_packet = MineChatPacket::Pong { timestamp_ms };
 
     message_stream.send_packet(&pong_packet).await
 }
