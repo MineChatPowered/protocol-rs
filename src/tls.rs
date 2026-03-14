@@ -4,6 +4,7 @@ use crate::packets::MineChatPacket;
 use crate::protocol::{MessageStream, MineChatError};
 #[cfg(feature = "tokio")]
 use crate::stream::TokioMessageStream;
+use std::io::Error;
 
 #[cfg(feature = "tls-native")]
 /// A TLS-enabled `MessageStream` implementation using native TLS.
@@ -28,13 +29,11 @@ impl TlsMessageStream {
         use tokio::net::TcpStream;
 
         let tcp_stream = TcpStream::connect(addr).await?;
-        let tls_connector = TlsConnector::from(
-            TlsConnector::new().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?,
-        );
+        let tls_connector = TlsConnector::from(TlsConnector::new().map_err(|e| Error::other(e))?);
         let tls_stream = tokio_native_tls::TlsConnector::from(tls_connector)
             .connect(host, tcp_stream)
             .await
-            .map_err(|e| MineChatError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| MineChatError::Io(Error::other(e)))?;
 
         Ok(Self {
             inner: TokioMessageStream::new(tls_stream),
@@ -56,7 +55,8 @@ impl MessageStream for TlsMessageStream {
 
 #[cfg(feature = "tls-rustls")]
 use rustls::{
-    ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme,
+    CertificateError, ClientConfig, DigitallySignedStruct, Error as RustlsError, RootCertStore,
+    SignatureScheme,
     pki_types::{CertificateDer, ServerName, UnixTime},
 };
 #[cfg(feature = "tls-rustls")]
@@ -67,7 +67,7 @@ use tokio_rustls::TlsConnector as RustlsTlsConnector;
 use tokio_rustls::client::TlsStream as RustlsTlsStream;
 
 #[cfg(feature = "tls-rustls")]
-use rustls::client::danger::ServerCertVerified;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 
 #[cfg(feature = "tls-rustls")]
 /// A TLS-enabled `MessageStream` implementation using rustls with certificate pinning support.
@@ -133,7 +133,7 @@ impl RustlsTlsMessageStream {
         let tls_stream = connector
             .connect(server_name, tcp_stream)
             .await
-            .map_err(|e| MineChatError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| MineChatError::Io(Error::other(e)))?;
 
         // Extract server certificate for pinning
         let server_cert = tls_stream
@@ -187,7 +187,7 @@ impl RustlsTlsMessageStream {
 struct TrustOnFirstUseCertVerifier;
 
 #[cfg(feature = "tls-rustls")]
-impl rustls::client::danger::ServerCertVerifier for TrustOnFirstUseCertVerifier {
+impl ServerCertVerifier for TrustOnFirstUseCertVerifier {
     fn verify_server_cert(
         &self,
         _end_entity: &CertificateDer<'_>,
@@ -195,7 +195,7 @@ impl rustls::client::danger::ServerCertVerifier for TrustOnFirstUseCertVerifier 
         _server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
         _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
+    ) -> Result<ServerCertVerified, RustlsError> {
         // Accept any certificate for first-time linking
         // The certificate will be pinned after this for future connections
         Ok(ServerCertVerified::assertion())
@@ -206,8 +206,8 @@ impl rustls::client::danger::ServerCertVerifier for TrustOnFirstUseCertVerifier 
         _message: &[u8],
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        Ok(HandshakeSignatureValid::assertion())
     }
 
     fn verify_tls13_signature(
@@ -215,8 +215,8 @@ impl rustls::client::danger::ServerCertVerifier for TrustOnFirstUseCertVerifier 
         _message: &[u8],
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        Ok(HandshakeSignatureValid::assertion())
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -244,7 +244,7 @@ struct PinnedCertVerifier {
 }
 
 #[cfg(feature = "tls-rustls")]
-impl rustls::client::danger::ServerCertVerifier for PinnedCertVerifier {
+impl ServerCertVerifier for PinnedCertVerifier {
     fn verify_server_cert(
         &self,
         end_entity: &CertificateDer<'_>,
@@ -252,15 +252,15 @@ impl rustls::client::danger::ServerCertVerifier for PinnedCertVerifier {
         _server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
         _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
+    ) -> Result<ServerCertVerified, RustlsError> {
         // If certificate matches pinned cert, accept
         if end_entity.as_ref() == self.pinned_cert.as_ref() {
             return Ok(ServerCertVerified::assertion());
         }
 
         // Certificate mismatch MUST cause connection failure
-        Err(rustls::Error::InvalidCertificate(
-            rustls::CertificateError::ApplicationVerificationFailure,
+        Err(RustlsError::InvalidCertificate(
+            CertificateError::ApplicationVerificationFailure,
         ))
     }
 
@@ -269,8 +269,8 @@ impl rustls::client::danger::ServerCertVerifier for PinnedCertVerifier {
         _message: &[u8],
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        Ok(HandshakeSignatureValid::assertion())
     }
 
     fn verify_tls13_signature(
@@ -278,8 +278,8 @@ impl rustls::client::danger::ServerCertVerifier for PinnedCertVerifier {
         _message: &[u8],
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        Ok(HandshakeSignatureValid::assertion())
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {

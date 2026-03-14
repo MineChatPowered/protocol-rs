@@ -469,13 +469,8 @@ pub struct LinkCode(String);
 
 impl LinkCode {
     /// Creates a new LinkCode from a string
-    /// Returns ValidationError if the code is empty or too long
+    /// Returns ValidationError if the code is too long (empty is allowed for reconnection)
     pub fn new(code: String) -> Result<Self, ValidationError> {
-        if code.trim().is_empty() {
-            return Err(ValidationError::InvalidMessageFormat {
-                format: "empty link code".to_string(),
-            });
-        }
         if code.len() > 100 {
             return Err(ValidationError::MessageTooLarge {
                 size: code.len(),
