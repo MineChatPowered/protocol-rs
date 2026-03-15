@@ -1,5 +1,6 @@
 use crate::types::MessageContent;
 use miette::Diagnostic;
+use serde::de::Error as SerdeDeError;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
@@ -370,32 +371,31 @@ impl Payload {
     /// Convert from a Payload to a MineChatPacket using packet_type context
     pub fn to_packet<E>(self, packet_type: i32) -> Result<MineChatPacket, E>
     where
-        E: serde::de::Error,
+        E: SerdeDeError,
     {
         match packet_type {
             _ if packet_type == packet_type::LINK => {
                 let linking_code = self
                     .linking_code
-                    .ok_or_else(|| serde::de::Error::missing_field("linking_code"))?;
+                    .ok_or_else(|| SerdeDeError::missing_field("linking_code"))?;
                 let client_uuid = self
                     .client_uuid
-                    .ok_or_else(|| serde::de::Error::missing_field("client_uuid"))?;
+                    .ok_or_else(|| SerdeDeError::missing_field("client_uuid"))?;
                 Ok(MineChatPacket::Link {
                     linking_code: LinkCode::new(linking_code).map_err(|e| {
-                        serde::de::Error::custom(format!("invalid linking_code: {}", e))
+                        SerdeDeError::custom(format!("invalid linking_code: {}", e))
                     })?,
-                    client_uuid: ClientUuid::new(client_uuid).map_err(|e| {
-                        serde::de::Error::custom(format!("invalid client_uuid: {}", e))
-                    })?,
+                    client_uuid: ClientUuid::new(client_uuid)
+                        .map_err(|e| SerdeDeError::custom(format!("invalid client_uuid: {}", e)))?,
                 })
             }
             _ if packet_type == packet_type::LINK_OK => {
                 let minecraft_uuid = self
                     .minecraft_uuid
-                    .ok_or_else(|| serde::de::Error::missing_field("minecraft_uuid"))?;
+                    .ok_or_else(|| SerdeDeError::missing_field("minecraft_uuid"))?;
                 Ok(MineChatPacket::LinkOk {
                     minecraft_uuid: MinecraftUuid::new(minecraft_uuid).map_err(|e| {
-                        serde::de::Error::custom(format!("invalid minecraft_uuid: {}", e))
+                        SerdeDeError::custom(format!("invalid minecraft_uuid: {}", e))
                     })?,
                 })
             }
@@ -409,14 +409,14 @@ impl Payload {
             _ if packet_type == packet_type::CHAT_MESSAGE => {
                 let format = self
                     .format
-                    .ok_or_else(|| serde::de::Error::missing_field("format"))?;
+                    .ok_or_else(|| SerdeDeError::missing_field("format"))?;
                 let content = self
                     .content
-                    .ok_or_else(|| serde::de::Error::missing_field("content"))?;
+                    .ok_or_else(|| SerdeDeError::missing_field("content"))?;
                 let format_str = format.clone();
                 Ok(MineChatPacket::ChatMessage {
                     format: MessageFormat::new(format)
-                        .map_err(|e| serde::de::Error::custom(format!("invalid format: {}", e)))?,
+                        .map_err(|e| SerdeDeError::custom(format!("invalid format: {}", e)))?,
                     content: if format_str == "components" {
                         MessageContent::Components(
                             serde_json::from_str(&content)
@@ -438,15 +438,15 @@ impl Payload {
             _ if packet_type == packet_type::MODERATION => {
                 let action = self
                     .action
-                    .ok_or_else(|| serde::de::Error::missing_field("action"))?;
+                    .ok_or_else(|| SerdeDeError::missing_field("action"))?;
                 let scope = self
                     .scope
-                    .ok_or_else(|| serde::de::Error::missing_field("scope"))?;
+                    .ok_or_else(|| SerdeDeError::missing_field("scope"))?;
                 Ok(MineChatPacket::Moderation {
                     action: ModerationAction::new(action)
-                        .map_err(|e| serde::de::Error::custom(format!("invalid action: {}", e)))?,
+                        .map_err(|e| SerdeDeError::custom(format!("invalid action: {}", e)))?,
                     scope: ModerationScope::new(scope)
-                        .map_err(|e| serde::de::Error::custom(format!("invalid scope: {}", e)))?,
+                        .map_err(|e| SerdeDeError::custom(format!("invalid scope: {}", e)))?,
                     reason: self.reason,
                     duration_seconds: self.duration_seconds,
                 })
@@ -455,7 +455,7 @@ impl Payload {
                 let reason = self.reason.unwrap_or_default();
                 Ok(MineChatPacket::Disconnect { reason })
             }
-            _ => Err(serde::de::Error::custom(format!(
+            _ => Err(SerdeDeError::custom(format!(
                 "unknown packet type: {}",
                 packet_type
             ))),
