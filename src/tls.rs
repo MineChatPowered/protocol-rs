@@ -5,6 +5,11 @@ use crate::protocol::{MessageStream, MineChatError};
 #[cfg(feature = "tokio")]
 use crate::stream::TokioMessageStream;
 use std::io::Error;
+use tokio::net::TcpStream;
+#[cfg(feature = "tls-rustls")]
+use base64::Engine;
+#[cfg(feature = "tls-rustls")]
+use base64::prelude::*;
 
 #[cfg(feature = "tls-native")]
 /// A TLS-enabled `MessageStream` implementation using native TLS.
@@ -26,7 +31,6 @@ impl TlsMessageStream {
     /// Returns a `MineChatError` if TLS connection fails.
     pub async fn connect(host: &str, addr: &str) -> Result<Self, MineChatError> {
         use native_tls::TlsConnector;
-        use tokio::net::TcpStream;
 
         let tcp_stream = TcpStream::connect(addr).await?;
         let tls_connector = TlsConnector::from(TlsConnector::new().map_err(|e| Error::other(e))?);
@@ -95,16 +99,13 @@ impl RustlsTlsMessageStream {
         addr: &str,
         pinned_cert: Option<&str>,
     ) -> Result<Self, MineChatError> {
-        use base64::Engine;
-        use tokio::net::TcpStream;
-
         let mut config = ClientConfig::builder()
             .with_root_certificates(RootCertStore::empty())
             .with_no_client_auth();
 
         // If we have a pinned certificate, configure verification
         if let Some(pinned) = pinned_cert {
-            let cert_der = base64::prelude::BASE64_STANDARD
+            let cert_der = BASE64_STANDARD
                 .decode(pinned)
                 .map_err(|e| {
                     MineChatError::ConfigError(format!("Invalid base64 certificate: {}", e))
@@ -172,10 +173,9 @@ impl RustlsTlsMessageStream {
 
     /// Get the server certificate as a base64-encoded string for storage
     pub fn server_certificate_base64(&self) -> Option<String> {
-        use base64::Engine;
         self.server_cert
             .as_ref()
-            .map(|cert| base64::prelude::BASE64_STANDARD.encode(cert.as_ref()))
+            .map(|cert| BASE64_STANDARD.encode(cert.as_ref()))
     }
 }
 
