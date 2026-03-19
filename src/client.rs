@@ -134,28 +134,6 @@ pub async fn send_chat_message(
     message_stream.send_packet(&chat_packet).await
 }
 
-/// Sends a DISCONNECT packet to the server.
-///
-/// # Arguments
-///
-/// * `message_stream` - A mutable reference to a message stream implementing `MessageStream`.
-/// * `reason` - The reason for disconnection.
-///
-/// # Errors
-///
-/// Returns a `MineChatError` if sending the packet fails.
-pub async fn send_disconnect(
-    message_stream: &mut (dyn MessageStream + Unpin + Send),
-    reason: &str,
-) -> Result<(), MineChatError> {
-    trace!("Sending DISCONNECT packet: {}", reason);
-    let disconnect_packet = MineChatPacket::Disconnect {
-        reason: reason.to_string(),
-    };
-
-    message_stream.send_packet(&disconnect_packet).await
-}
-
 /// Sends a PONG packet to the server.
 ///
 /// # Arguments

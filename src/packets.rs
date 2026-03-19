@@ -24,8 +24,20 @@ pub mod packet_type {
     pub const PONG: i32 = 0x07;
     /// `MODERATION` packet type (0x08) - Server → Client
     pub const MODERATION: i32 = 0x08;
-    /// `DISCONNECT` packet type (0x80) - Bidirectional (Implementation-private)
-    pub const DISCONNECT: i32 = 0x80;
+    /// `SYSTEM_DISCONNECT` packet type (0x09) - Server → Client
+    pub const SYSTEM_DISCONNECT: i32 = 0x09;
+}
+
+/// System disconnect reason codes
+pub mod system_disconnect_reason {
+    /// Server shutdown
+    pub const SHUTDOWN: i32 = 0;
+    /// Server maintenance
+    pub const MAINTENANCE: i32 = 1;
+    /// Internal server error
+    pub const INTERNAL_ERROR: i32 = 2;
+    /// Server overloaded
+    pub const OVERLOADED: i32 = 3;
 }
 
 /// Error type for packet validation
@@ -157,10 +169,12 @@ pub enum MineChatPacket {
         duration_seconds: Option<i32>,
     },
 
-    /// `DISCONNECT` packet (0x80) - Implementation-private
-    Disconnect {
-        /// The reason for disconnection
-        reason: String,
+    /// `SYSTEM_DISCONNECT` packet (0x09) - Server → Client
+    SystemDisconnect {
+        /// The reason code (0=shutdown, 1=maintenance, 2=internal_error, 3=overloaded)
+        reason_code: i32,
+        /// Human-readable message describing the disconnect
+        message: String,
     },
 }
 
@@ -178,7 +192,7 @@ impl Serialize for MineChatPacket {
             MineChatPacket::Ping { .. } => packet_type::PING,
             MineChatPacket::Pong { .. } => packet_type::PONG,
             MineChatPacket::Moderation { .. } => packet_type::MODERATION,
-            MineChatPacket::Disconnect { .. } => packet_type::DISCONNECT,
+            MineChatPacket::SystemDisconnect { .. } => packet_type::SYSTEM_DISCONNECT,
         };
 
         let mut map = serializer.serialize_map(Some(2))?;
@@ -232,6 +246,8 @@ pub struct Payload {
     reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     duration_seconds: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason_code: Option<i32>,
 }
 
 impl Payload {
@@ -253,6 +269,7 @@ impl Payload {
                 scope: None,
                 reason: None,
                 duration_seconds: None,
+                reason_code: None,
             },
             MineChatPacket::LinkOk { minecraft_uuid } => Payload {
                 linking_code: None,
@@ -266,6 +283,7 @@ impl Payload {
                 scope: None,
                 reason: None,
                 duration_seconds: None,
+                reason_code: None,
             },
             MineChatPacket::Capabilities {
                 supports_components,
@@ -281,6 +299,7 @@ impl Payload {
                 scope: None,
                 reason: None,
                 duration_seconds: None,
+                reason_code: None,
             },
             MineChatPacket::AuthOk => Payload {
                 linking_code: None,
@@ -294,6 +313,7 @@ impl Payload {
                 scope: None,
                 reason: None,
                 duration_seconds: None,
+                reason_code: None,
             },
             MineChatPacket::ChatMessage { format, content } => Payload {
                 linking_code: None,
@@ -307,6 +327,7 @@ impl Payload {
                 scope: None,
                 reason: None,
                 duration_seconds: None,
+                reason_code: None,
             },
             MineChatPacket::Ping { timestamp_ms } => Payload {
                 linking_code: None,
@@ -320,6 +341,7 @@ impl Payload {
                 scope: None,
                 reason: None,
                 duration_seconds: None,
+                reason_code: None,
             },
             MineChatPacket::Pong { timestamp_ms } => Payload {
                 linking_code: None,
@@ -333,6 +355,7 @@ impl Payload {
                 scope: None,
                 reason: None,
                 duration_seconds: None,
+                reason_code: None,
             },
             MineChatPacket::Moderation {
                 action,
@@ -351,8 +374,12 @@ impl Payload {
                 scope: Some(scope.value()),
                 reason: reason.clone(),
                 duration_seconds: *duration_seconds,
+                reason_code: None,
             },
-            MineChatPacket::Disconnect { reason } => Payload {
+            MineChatPacket::SystemDisconnect {
+                reason_code,
+                message,
+            } => Payload {
                 linking_code: None,
                 client_uuid: None,
                 minecraft_uuid: None,
@@ -362,8 +389,9 @@ impl Payload {
                 timestamp_ms: None,
                 action: None,
                 scope: None,
-                reason: Some(reason.clone()),
+                reason: Some(message.clone()),
                 duration_seconds: None,
+                reason_code: Some(*reason_code),
             },
         }
     }
@@ -451,9 +479,13 @@ impl Payload {
                     duration_seconds: self.duration_seconds,
                 })
             }
-            _ if packet_type == packet_type::DISCONNECT => {
-                let reason = self.reason.unwrap_or_default();
-                Ok(MineChatPacket::Disconnect { reason })
+            _ if packet_type == packet_type::SYSTEM_DISCONNECT => {
+                let reason_code = self.reason_code.unwrap_or(0);
+                let message = self.reason.unwrap_or_default();
+                Ok(MineChatPacket::SystemDisconnect {
+                    reason_code,
+                    message,
+                })
             }
             _ => Err(SerdeDeError::custom(format!(
                 "unknown packet type: {}",

@@ -29,8 +29,7 @@ pub mod types;
 
 #[cfg(feature = "tokio")]
 pub use client::{
-    link_with_server, send_capabilities, send_chat_message, send_disconnect, send_pong,
-    wait_auth_ok,
+    link_with_server, send_capabilities, send_chat_message, send_pong, wait_auth_ok,
 };
 #[cfg(feature = "tokio")]
 pub use stream::TokioMessageStream;
