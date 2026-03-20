@@ -38,9 +38,9 @@ pub use client::{link_with_server, send_capabilities, send_chat_message, send_po
 #[cfg(feature = "tokio")]
 pub use stream::TokioMessageStream;
 #[cfg(feature = "tls-rustls")]
-pub use tls::RustlsTlsMessageStream;
+pub use tls::rustls::RustlsTlsMessageStream;
 #[cfg(feature = "tls-native")]
-pub use tls::TlsMessageStream;
+pub use tls::native::TlsMessageStream;
 
 pub use protocol::{
     MessageStream, MineChatError, chat_format, moderation_action, moderation_scope, packet_types,

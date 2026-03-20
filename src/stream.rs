@@ -7,7 +7,7 @@ use async_trait::async_trait;
 #[cfg(feature = "tokio")]
 use log::trace;
 #[cfg(feature = "tokio")]
-use std::io::{self, Cursor};
+use std::io::Cursor;
 #[cfg(feature = "tokio")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
