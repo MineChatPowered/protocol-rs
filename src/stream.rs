@@ -1,5 +1,5 @@
 #[cfg(feature = "tokio")]
-use crate::packets::MineChatPacket;
+use crate::packets::{MineChatPacket, ValidationError};
 #[cfg(feature = "tokio")]
 use crate::protocol::{MessageStream, MineChatError};
 #[cfg(feature = "tokio")]
@@ -7,7 +7,7 @@ use async_trait::async_trait;
 #[cfg(feature = "tokio")]
 use log::trace;
 #[cfg(feature = "tokio")]
-use std::io::Cursor;
+use std::io::{self, Cursor};
 #[cfg(feature = "tokio")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -53,7 +53,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> MessageStream for TokioMessageStr
     async fn send_packet(&mut self, packet: &MineChatPacket) -> Result<(), MineChatError> {
         trace!("Serializing packet {:?}", packet);
 
-        let serialized = serde_cbor::to_vec(packet)?;
+        // Use spec-compliant serialization with integer keys
+        let serialized = packet.to_bytes().map_err(|e: ValidationError| {
+            MineChatError::Serde(serde_cbor::Error::from(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            )))
+        })?;
         let compressed = zstd::encode_all(Cursor::new(&serialized), 3)
             .map_err(|e| MineChatError::Zstd(e.to_string()))?;
 
@@ -101,7 +107,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> MessageStream for TokioMessageStr
             ));
         }
 
-        let packet: MineChatPacket = serde_cbor::from_slice(&decompressed)?;
+        // Use spec-compliant deserialization that accepts integer keys
+        let packet = MineChatPacket::from_bytes(&decompressed).map_err(|e: ValidationError| {
+            MineChatError::Serde(serde_cbor::Error::from(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            )))
+        })?;
         Ok(packet)
     }
 }

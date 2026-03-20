@@ -1,8 +1,26 @@
+//! MineChat packet types and serialization.
+//!
+//! This module defines all packet types for the MineChat protocol as specified
+//! in the protocol specification (Section 8). Each packet consists of an envelope
+//! with a packet type identifier and a typed payload.
+//!
+//! ## Serialization
+//!
+//! All packets are serialized as CBOR maps with integer keys:
+//!
+//! ```cbor
+//! { 0: packet_type, 1: payload }
+//! ```
+//!
+//! The payload structure varies by packet type as defined in the specification.
+
+use crate::payloads;
+
+use crate::cbor;
 use crate::types::MessageContent;
 use miette::Diagnostic;
-use serde::de::Error as SerdeDeError;
-use serde::ser::SerializeMap;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use payloads::*;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -79,6 +97,14 @@ pub enum ValidationError {
         /// Maximum allowed size in bytes
         max_size: usize,
     },
+
+    /// Serialization error
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+
+    /// Deserialization error
+    #[error("Deserialization error: {0}")]
+    Deserialization(String),
 }
 
 /// Chat format constants with validation
@@ -111,7 +137,10 @@ impl MessageFormat {
     }
 }
 
-/// A MineChat packet with proper type tagging to fix deserialization ambiguity
+/// A MineChat packet with proper type tagging.
+///
+/// Each variant corresponds to a packet type as defined in the protocol
+/// specification (Section 8).
 #[derive(Debug, Clone, PartialEq)]
 pub enum MineChatPacket {
     /// `LINK` packet (0x01) - Client → Server
@@ -178,11 +207,9 @@ pub enum MineChatPacket {
     },
 }
 
-impl Serialize for MineChatPacket {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
+impl MineChatPacket {
+    /// Returns the packet type identifier for this packet.
+    pub fn packet_type(&self) -> i32 {
         let packet_type = match self {
             MineChatPacket::Link { .. } => packet_type::LINK,
             MineChatPacket::LinkOk { .. } => packet_type::LINK_OK,
@@ -194,303 +221,282 @@ impl Serialize for MineChatPacket {
             MineChatPacket::Moderation { .. } => packet_type::MODERATION,
             MineChatPacket::SystemDisconnect { .. } => packet_type::SYSTEM_DISCONNECT,
         };
-
-        let mut map = serializer.serialize_map(Some(2))?;
-        map.serialize_entry(&0, &packet_type)?;
-
-        map.serialize_entry(&1, &Payload::from_packet(self))?;
-        map.end()
+        debug_assert!(
+            (0x01..=0x09).contains(&packet_type),
+            "Packet type must be 0x01-0x09, got {:#04x}",
+            packet_type
+        );
+        packet_type
     }
-}
 
-impl<'de> Deserialize<'de> for MineChatPacket {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct Envelope {
-            #[serde(rename = "0")]
-            packet_type: i32,
-            #[serde(rename = "1")]
-            payload: Payload,
-        }
+    /// Serializes this packet to CBOR bytes with spec-compliant integer keys.
+    ///
+    /// This method should be used for network transmission to ensure
+    /// spec-compliant serialization.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, ValidationError> {
+        let (packet_type, payload_bytes) = self.serialize_payload()?;
 
-        let envelope = Envelope::deserialize(deserializer)?;
-        envelope.payload.to_packet(envelope.packet_type)
+        // Build the envelope with integer keys
+        // { 0: packet_type, 1: payload }
+        let mut buf = Vec::new();
+
+        // Map header (2 entries)
+        buf.push(0xa2);
+
+        // Key 0: packet_type
+        buf.push(0x00); // unsigned(0)
+                        // Value: packet_type (variable length encoding)
+        encode_varint(&mut buf, packet_type as i64);
+
+        // Key 1: payload
+        buf.push(0x01); // unsigned(1)
+                        // Value: payload bytes
+        buf.extend_from_slice(&payload_bytes);
+
+        // Protocol invariants: verify envelope structure
+        debug_assert_eq!(buf[0], 0xa2, "Envelope must be map(2)");
+        debug_assert_eq!(buf[1], 0x00, "Key 0 must be integer 0");
+        debug_assert_eq!(buf[3], 0x01, "Key 1 must be integer 1");
+        debug_assert!(
+            Self::from_bytes(&buf).is_ok(),
+            "Roundtrip serialization failed"
+        );
+
+        Ok(buf)
     }
-}
 
-/// Internal payload representation for CBOR serialization (uses string keys per spec)
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Payload {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    linking_code: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    client_uuid: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    minecraft_uuid: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    supports_components: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    format: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    timestamp_ms: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    action: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    scope: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    duration_seconds: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    reason_code: Option<i32>,
-}
+    /// Deserializes a packet from CBOR bytes.
+    ///
+    /// This method accepts both integer keys (spec-compliant) and string keys
+    /// for robustness during migration.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ValidationError> {
+        cbor::deserialize_envelope(bytes)
+            .map_err(|e| ValidationError::Deserialization(e.to_string()))
+            .and_then(|(packet_type, payload)| Self::from_payload(packet_type, payload))
+    }
 
-impl Payload {
-    /// Convert from a MineChatPacket to a serializable Payload
-    pub fn from_packet(packet: &MineChatPacket) -> Self {
-        match packet {
+    /// Serializes the payload portion and returns (packet_type, payload_bytes).
+    fn serialize_payload(&self) -> Result<(i32, Vec<u8>), ValidationError> {
+        let packet_type = self.packet_type();
+
+        let payload_bytes = match self {
             MineChatPacket::Link {
                 linking_code,
                 client_uuid,
-            } => Payload {
-                linking_code: Some(linking_code.as_str().to_string()),
-                client_uuid: Some(client_uuid.as_str().to_string()),
-                minecraft_uuid: None,
-                supports_components: None,
-                format: None,
-                content: None,
-                timestamp_ms: None,
-                action: None,
-                scope: None,
-                reason: None,
-                duration_seconds: None,
-                reason_code: None,
-            },
-            MineChatPacket::LinkOk { minecraft_uuid } => Payload {
-                linking_code: None,
-                client_uuid: None,
-                minecraft_uuid: Some(minecraft_uuid.as_str().to_string()),
-                supports_components: None,
-                format: None,
-                content: None,
-                timestamp_ms: None,
-                action: None,
-                scope: None,
-                reason: None,
-                duration_seconds: None,
-                reason_code: None,
-            },
+            } => {
+                let payload = LinkPayload {
+                    linking_code: linking_code.as_str().to_string(),
+                    client_uuid: client_uuid.as_str().to_string(),
+                };
+                cbor::serialize(&payload)
+                    .map_err(|e| ValidationError::Serialization(e.to_string()))?
+            }
+            MineChatPacket::LinkOk { minecraft_uuid } => {
+                let payload = LinkOkPayload {
+                    minecraft_uuid: minecraft_uuid.as_str().to_string(),
+                };
+                cbor::serialize(&payload)
+                    .map_err(|e| ValidationError::Serialization(e.to_string()))?
+            }
             MineChatPacket::Capabilities {
                 supports_components,
-            } => Payload {
-                linking_code: None,
-                client_uuid: None,
-                minecraft_uuid: None,
-                supports_components: Some(*supports_components),
-                format: None,
-                content: None,
-                timestamp_ms: None,
-                action: None,
-                scope: None,
-                reason: None,
-                duration_seconds: None,
-                reason_code: None,
-            },
-            MineChatPacket::AuthOk => Payload {
-                linking_code: None,
-                client_uuid: None,
-                minecraft_uuid: None,
-                supports_components: None,
-                format: None,
-                content: None,
-                timestamp_ms: None,
-                action: None,
-                scope: None,
-                reason: None,
-                duration_seconds: None,
-                reason_code: None,
-            },
-            MineChatPacket::ChatMessage { format, content } => Payload {
-                linking_code: None,
-                client_uuid: None,
-                minecraft_uuid: None,
-                supports_components: None,
-                format: Some(format.as_str().to_string()),
-                content: Some(content.to_cbor_string()),
-                timestamp_ms: None,
-                action: None,
-                scope: None,
-                reason: None,
-                duration_seconds: None,
-                reason_code: None,
-            },
-            MineChatPacket::Ping { timestamp_ms } => Payload {
-                linking_code: None,
-                client_uuid: None,
-                minecraft_uuid: None,
-                supports_components: None,
-                format: None,
-                content: None,
-                timestamp_ms: Some(*timestamp_ms),
-                action: None,
-                scope: None,
-                reason: None,
-                duration_seconds: None,
-                reason_code: None,
-            },
-            MineChatPacket::Pong { timestamp_ms } => Payload {
-                linking_code: None,
-                client_uuid: None,
-                minecraft_uuid: None,
-                supports_components: None,
-                format: None,
-                content: None,
-                timestamp_ms: Some(*timestamp_ms),
-                action: None,
-                scope: None,
-                reason: None,
-                duration_seconds: None,
-                reason_code: None,
-            },
+            } => {
+                let payload = CapabilitiesPayload {
+                    supports_components: *supports_components,
+                };
+                cbor::serialize(&payload)
+                    .map_err(|e| ValidationError::Serialization(e.to_string()))?
+            }
+            MineChatPacket::AuthOk => {
+                // Empty payload
+                vec![0xa0] // empty map
+            }
+            MineChatPacket::ChatMessage { format, content } => {
+                let payload = ChatMessagePayload {
+                    format: format.as_str().to_string(),
+                    content: content.to_cbor_string(),
+                };
+                cbor::serialize(&payload)
+                    .map_err(|e| ValidationError::Serialization(e.to_string()))?
+            }
+            MineChatPacket::Ping { timestamp_ms } => {
+                let payload = PingPayload {
+                    timestamp_ms: *timestamp_ms,
+                };
+                cbor::serialize(&payload)
+                    .map_err(|e| ValidationError::Serialization(e.to_string()))?
+            }
+            MineChatPacket::Pong { timestamp_ms } => {
+                let payload = PongPayload {
+                    timestamp_ms: *timestamp_ms,
+                };
+                cbor::serialize(&payload)
+                    .map_err(|e| ValidationError::Serialization(e.to_string()))?
+            }
             MineChatPacket::Moderation {
                 action,
                 scope,
                 reason,
                 duration_seconds,
-            } => Payload {
-                linking_code: None,
-                client_uuid: None,
-                minecraft_uuid: None,
-                supports_components: None,
-                format: None,
-                content: None,
-                timestamp_ms: None,
-                action: Some(action.value()),
-                scope: Some(scope.value()),
-                reason: reason.clone(),
-                duration_seconds: *duration_seconds,
-                reason_code: None,
-            },
+            } => {
+                let payload = ModerationPayload {
+                    action: action.value(),
+                    scope: scope.value(),
+                    reason: reason.clone(),
+                    duration_seconds: *duration_seconds,
+                };
+                cbor::serialize(&payload)
+                    .map_err(|e| ValidationError::Serialization(e.to_string()))?
+            }
             MineChatPacket::SystemDisconnect {
                 reason_code,
                 message,
-            } => Payload {
-                linking_code: None,
-                client_uuid: None,
-                minecraft_uuid: None,
-                supports_components: None,
-                format: None,
-                content: None,
-                timestamp_ms: None,
-                action: None,
-                scope: None,
-                reason: Some(message.clone()),
-                duration_seconds: None,
-                reason_code: Some(*reason_code),
-            },
-        }
+            } => {
+                let payload = SystemDisconnectPayload {
+                    reason_code: *reason_code,
+                    message: message.clone(),
+                };
+                cbor::serialize(&payload)
+                    .map_err(|e| ValidationError::Serialization(e.to_string()))?
+            }
+        };
+
+        Ok((packet_type, payload_bytes))
     }
 
-    /// Convert from a Payload to a MineChatPacket using packet_type context
-    pub fn to_packet<E>(self, packet_type: i32) -> Result<MineChatPacket, E>
-    where
-        E: SerdeDeError,
-    {
+    /// Deserializes from a packet type and raw payload bytes.
+    fn from_payload(packet_type: i32, payload: serde_cbor::Value) -> Result<Self, ValidationError> {
+        debug_assert!(
+            (0x01..=0x09).contains(&packet_type),
+            "Packet type must be 0x01-0x09, got {:#04x}",
+            packet_type
+        );
         match packet_type {
-            _ if packet_type == packet_type::LINK => {
-                let linking_code = self
-                    .linking_code
-                    .ok_or_else(|| SerdeDeError::missing_field("linking_code"))?;
-                let client_uuid = self
-                    .client_uuid
-                    .ok_or_else(|| SerdeDeError::missing_field("client_uuid"))?;
+            packet_type::LINK => {
+                let payload: LinkPayload = decode_payload(payload)?;
                 Ok(MineChatPacket::Link {
-                    linking_code: LinkCode::new(linking_code).map_err(|e| {
-                        SerdeDeError::custom(format!("invalid linking_code: {}", e))
-                    })?,
-                    client_uuid: ClientUuid::new(client_uuid)
-                        .map_err(|e| SerdeDeError::custom(format!("invalid client_uuid: {}", e)))?,
+                    linking_code: LinkCode::new(payload.linking_code)
+                        .map_err(|e| ValidationError::Serialization(e.to_string()))?,
+                    client_uuid: ClientUuid::new(payload.client_uuid)
+                        .map_err(|e| ValidationError::Serialization(e.to_string()))?,
                 })
             }
-            _ if packet_type == packet_type::LINK_OK => {
-                let minecraft_uuid = self
-                    .minecraft_uuid
-                    .ok_or_else(|| SerdeDeError::missing_field("minecraft_uuid"))?;
+            packet_type::LINK_OK => {
+                let payload: LinkOkPayload = decode_payload(payload)?;
                 Ok(MineChatPacket::LinkOk {
-                    minecraft_uuid: MinecraftUuid::new(minecraft_uuid).map_err(|e| {
-                        SerdeDeError::custom(format!("invalid minecraft_uuid: {}", e))
-                    })?,
+                    minecraft_uuid: MinecraftUuid::new(payload.minecraft_uuid)
+                        .map_err(|e| ValidationError::Serialization(e.to_string()))?,
                 })
             }
-            _ if packet_type == packet_type::CAPABILITIES => {
-                let supports_components = self.supports_components.unwrap_or(false);
+            packet_type::CAPABILITIES => {
+                let payload: CapabilitiesPayload = decode_payload(payload)?;
                 Ok(MineChatPacket::Capabilities {
-                    supports_components,
+                    supports_components: payload.supports_components,
                 })
             }
-            _ if packet_type == packet_type::AUTH_OK => Ok(MineChatPacket::AuthOk),
-            _ if packet_type == packet_type::CHAT_MESSAGE => {
-                let format = self
-                    .format
-                    .ok_or_else(|| SerdeDeError::missing_field("format"))?;
-                let content = self
-                    .content
-                    .ok_or_else(|| SerdeDeError::missing_field("content"))?;
-                let format_str = format.clone();
-                Ok(MineChatPacket::ChatMessage {
-                    format: MessageFormat::new(format)
-                        .map_err(|e| SerdeDeError::custom(format!("invalid format: {}", e)))?,
-                    content: if format_str == "components" {
-                        MessageContent::Components(
-                            serde_json::from_str(&content)
-                                .unwrap_or_else(|_| kyori_component_json::Component::text(content)),
-                        )
-                    } else {
-                        MessageContent::CommonMark(content)
-                    },
+            packet_type::AUTH_OK => Ok(MineChatPacket::AuthOk),
+            packet_type::CHAT_MESSAGE => {
+                let payload: ChatMessagePayload = decode_payload(payload)?;
+                let format_str = payload.format.clone();
+                let format = MessageFormat::new(payload.format)
+                    .map_err(|e| ValidationError::Serialization(e.to_string()))?;
+                let content = if format_str == "components" {
+                    MessageContent::Components(
+                        serde_json::from_str(&payload.content).unwrap_or_else(|_| {
+                            kyori_component_json::Component::text(&payload.content)
+                        }),
+                    )
+                } else {
+                    MessageContent::CommonMark(payload.content)
+                };
+                Ok(MineChatPacket::ChatMessage { format, content })
+            }
+            packet_type::PING => {
+                let payload: PingPayload = decode_payload(payload)?;
+                Ok(MineChatPacket::Ping {
+                    timestamp_ms: payload.timestamp_ms,
                 })
             }
-            _ if packet_type == packet_type::PING => {
-                let timestamp_ms = self.timestamp_ms.unwrap_or(0);
-                Ok(MineChatPacket::Ping { timestamp_ms })
+            packet_type::PONG => {
+                let payload: PongPayload = decode_payload(payload)?;
+                Ok(MineChatPacket::Pong {
+                    timestamp_ms: payload.timestamp_ms,
+                })
             }
-            _ if packet_type == packet_type::PONG => {
-                let timestamp_ms = self.timestamp_ms.unwrap_or(0);
-                Ok(MineChatPacket::Pong { timestamp_ms })
-            }
-            _ if packet_type == packet_type::MODERATION => {
-                let action = self
-                    .action
-                    .ok_or_else(|| SerdeDeError::missing_field("action"))?;
-                let scope = self
-                    .scope
-                    .ok_or_else(|| SerdeDeError::missing_field("scope"))?;
+            packet_type::MODERATION => {
+                let payload: ModerationPayload = decode_payload(payload)?;
                 Ok(MineChatPacket::Moderation {
-                    action: ModerationAction::new(action)
-                        .map_err(|e| SerdeDeError::custom(format!("invalid action: {}", e)))?,
-                    scope: ModerationScope::new(scope)
-                        .map_err(|e| SerdeDeError::custom(format!("invalid scope: {}", e)))?,
-                    reason: self.reason,
-                    duration_seconds: self.duration_seconds,
+                    action: ModerationAction::new(payload.action)
+                        .map_err(|e| ValidationError::Serialization(e.to_string()))?,
+                    scope: ModerationScope::new(payload.scope)
+                        .map_err(|e| ValidationError::Serialization(e.to_string()))?,
+                    reason: payload.reason,
+                    duration_seconds: payload.duration_seconds,
                 })
             }
-            _ if packet_type == packet_type::SYSTEM_DISCONNECT => {
-                let reason_code = self.reason_code.unwrap_or(0);
-                let message = self.reason.unwrap_or_default();
+            packet_type::SYSTEM_DISCONNECT => {
+                let payload: SystemDisconnectPayload = decode_payload(payload)?;
                 Ok(MineChatPacket::SystemDisconnect {
-                    reason_code,
-                    message,
+                    reason_code: payload.reason_code,
+                    message: payload.message,
                 })
             }
-            _ => Err(SerdeDeError::custom(format!(
+            _ => Err(ValidationError::Deserialization(format!(
                 "unknown packet type: {}",
                 packet_type
             ))),
+        }
+    }
+}
+
+/// Decodes a CBOR Value to a typed payload.
+fn decode_payload<T: serde::de::DeserializeOwned>(
+    value: serde_cbor::Value,
+) -> Result<T, ValidationError> {
+    let bytes =
+        serde_cbor::to_vec(&value).map_err(|e| ValidationError::Deserialization(e.to_string()))?;
+    serde_cbor::de::from_slice(&bytes).map_err(|e| ValidationError::Deserialization(e.to_string()))
+}
+
+/// Encodes a variable-length integer to CBOR bytes.
+fn encode_varint(buf: &mut Vec<u8>, value: i64) {
+    if value >= 0 {
+        match value {
+            0..=23 => buf.push(value as u8),
+            24..=255 => {
+                buf.push(24);
+                buf.push(value as u8);
+            }
+            256..=65535 => {
+                buf.push(25);
+                buf.extend_from_slice(&(value as u16).to_be_bytes());
+            }
+            65536..=4294967295 => {
+                buf.push(26);
+                buf.extend_from_slice(&(value as u32).to_be_bytes());
+            }
+            _ => {
+                buf.push(27);
+                buf.extend_from_slice(&(value as u64).to_be_bytes());
+            }
+        }
+    } else {
+        // Negative integers
+        let abs_value = -value - 1;
+        match abs_value {
+            0..=23 => buf.push(0x20 | (abs_value as u8)),
+            24..=255 => {
+                buf.push(0x38);
+                buf.push(abs_value as u8);
+            }
+            256..=65535 => {
+                buf.push(0x39);
+                buf.extend_from_slice(&(abs_value as u16).to_be_bytes());
+            }
+            _ => {
+                buf.push(0x3a);
+                buf.extend_from_slice(&(abs_value as u32).to_be_bytes());
+            }
         }
     }
 }
@@ -526,7 +532,6 @@ impl ClientUuid {
     /// Creates a new ClientUuid from a string
     /// Returns ValidationError if the string is not a valid UUID
     pub fn new(uuid: String) -> Result<Self, ValidationError> {
-        // Validate UUID format
         Uuid::parse_str(&uuid).map_err(|_| ValidationError::InvalidUuid {
             value: uuid.clone(),
         })?;
@@ -552,7 +557,6 @@ impl MinecraftUuid {
     /// Creates a new MinecraftUuid from a string
     /// Returns ValidationError if the string is not a valid UUID
     pub fn new(uuid: String) -> Result<Self, ValidationError> {
-        // Validate UUID format
         Uuid::parse_str(&uuid).map_err(|_| ValidationError::InvalidUuid {
             value: uuid.clone(),
         })?;
@@ -623,19 +627,37 @@ impl ModerationScope {
 mod tests {
     use super::*;
     use crate::types::MessageContent;
-    use kyori_component_json::{Color, Component, NamedColor};
 
     #[test]
-    fn test_packet_serialization_roundtrip() {
-        let original = MineChatPacket::ChatMessage {
+    fn test_link_packet_serialization() {
+        let packet = MineChatPacket::Link {
+            linking_code: LinkCode::new("TEST123".to_string()).unwrap(),
+            client_uuid: ClientUuid::new("550e8400-e29b-41d4-a716-446655440000".to_string())
+                .unwrap(),
+        };
+
+        let bytes = packet.to_bytes().unwrap();
+
+        // Verify the packet type is correct
+        assert_eq!(packet.packet_type(), packet_type::LINK);
+
+        // Verify we can deserialize it back
+        let deserialized = MineChatPacket::from_bytes(&bytes).unwrap();
+        assert_eq!(packet, deserialized);
+
+        println!("LINK packet hex: {}", hex::encode(&bytes));
+    }
+
+    #[test]
+    fn test_chat_message_serialization() {
+        let packet = MineChatPacket::ChatMessage {
             format: MessageFormat::commonmark(),
             content: MessageContent::CommonMark("Hello, world!".to_string()),
         };
 
-        let serialized = serde_cbor::to_vec(&original).unwrap();
-        let deserialized: MineChatPacket = serde_cbor::from_slice(&serialized).unwrap();
-
-        assert_eq!(original, deserialized);
+        let bytes = packet.to_bytes().unwrap();
+        let deserialized = MineChatPacket::from_bytes(&bytes).unwrap();
+        assert_eq!(packet, deserialized);
     }
 
     #[test]
@@ -647,30 +669,89 @@ mod tests {
             timestamp_ms: 12345,
         };
 
-        let ping_serialized = serde_cbor::to_vec(&ping).unwrap();
-        let pong_serialized = serde_cbor::to_vec(&pong).unwrap();
+        let ping_bytes = ping.to_bytes().unwrap();
+        let pong_bytes = pong.to_bytes().unwrap();
 
-        let ping_deserialized: MineChatPacket = serde_cbor::from_slice(&ping_serialized).unwrap();
-        let pong_deserialized: MineChatPacket = serde_cbor::from_slice(&pong_serialized).unwrap();
+        let ping_deserialized = MineChatPacket::from_bytes(&ping_bytes).unwrap();
+        let pong_deserialized = MineChatPacket::from_bytes(&pong_bytes).unwrap();
 
         assert!(matches!(ping_deserialized, MineChatPacket::Ping { .. }));
         assert!(matches!(pong_deserialized, MineChatPacket::Pong { .. }));
     }
 
     #[test]
-    fn test_component_message_serialization() {
-        let component = Component::text("Hello")
-            .color(Some(Color::Named(NamedColor::Red)))
-            .decoration(kyori_component_json::TextDecoration::Bold, Some(true));
-
-        let original = MineChatPacket::ChatMessage {
-            format: MessageFormat::components(),
-            content: MessageContent::Components(component),
+    fn test_system_disconnect_serialization() {
+        let packet = MineChatPacket::SystemDisconnect {
+            reason_code: 0,
+            message: "Server shutdown".to_string(),
         };
 
-        let serialized = serde_cbor::to_vec(&original).unwrap();
-        let deserialized: MineChatPacket = serde_cbor::from_slice(&serialized).unwrap();
+        let bytes = packet.to_bytes().unwrap();
+        let deserialized = MineChatPacket::from_bytes(&bytes).unwrap();
 
-        assert_eq!(original, deserialized);
+        match deserialized {
+            MineChatPacket::SystemDisconnect {
+                reason_code,
+                message,
+            } => {
+                assert_eq!(reason_code, 0);
+                assert_eq!(message, "Server shutdown");
+            }
+            _ => panic!("expected SystemDisconnect"),
+        }
+    }
+
+    #[test]
+    fn test_moderation_serialization() {
+        let packet = MineChatPacket::Moderation {
+            action: ModerationAction::KICK,
+            scope: ModerationScope::ACCOUNT,
+            reason: Some("Rule violation".to_string()),
+            duration_seconds: None,
+        };
+
+        let bytes = packet.to_bytes().unwrap();
+        let deserialized = MineChatPacket::from_bytes(&bytes).unwrap();
+
+        match deserialized {
+            MineChatPacket::Moderation {
+                action,
+                scope,
+                reason,
+                duration_seconds,
+            } => {
+                assert_eq!(action.value(), 2); // KICK
+                assert_eq!(scope.value(), 1); // ACCOUNT
+                assert_eq!(reason, Some("Rule violation".to_string()));
+                assert_eq!(duration_seconds, None);
+            }
+            _ => panic!("expected Moderation"),
+        }
+    }
+
+    #[test]
+    fn test_auth_ok_serialization() {
+        let packet = MineChatPacket::AuthOk;
+        let bytes = packet.to_bytes().unwrap();
+        let deserialized = MineChatPacket::from_bytes(&bytes).unwrap();
+        assert_eq!(packet, deserialized);
+    }
+
+    #[test]
+    fn test_integer_keys_in_output() {
+        let packet = MineChatPacket::Ping {
+            timestamp_ms: 12345,
+        };
+        let bytes = packet.to_bytes().unwrap();
+
+        // Verify that keys are integers (0 and 1), not strings
+        // The first bytes should be: a2 00 06 01 ...
+        // a2 = map(2), 00 = key 0, 06 = value 6 (PING), 01 = key 1
+        assert!(bytes[0] == 0xa2, "Expected map(2) header");
+        assert!(bytes[1] == 0x00, "Expected integer key 0");
+        assert!(bytes[2] == 0x06, "Expected PING packet type (0x06)");
+        assert!(bytes[3] == 0x01, "Expected integer key 1");
+
+        println!("Integer key test passed. Bytes: {:02X?}", &bytes);
     }
 }

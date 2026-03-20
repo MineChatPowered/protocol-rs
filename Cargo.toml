@@ -36,3 +36,6 @@ tokio = ["dep:tokio"]
 tls-native = ["tokio", "dep:tokio-native-tls", "dep:native-tls"]
 tls-rustls = ["tokio", "dep:rustls", "dep:tokio-rustls", "dep:x509-parser", "dep:base64"]
 cert-pinning = ["tls-rustls"]
+
+[dev-dependencies]
+hex = "0.4"

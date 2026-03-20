@@ -4,12 +4,14 @@ use crate::packets::MineChatPacket;
 use crate::protocol::{MessageStream, MineChatError};
 #[cfg(feature = "tokio")]
 use crate::stream::TokioMessageStream;
-use std::io::Error;
-use tokio::net::TcpStream;
 #[cfg(feature = "tls-rustls")]
 use base64::Engine;
 #[cfg(feature = "tls-rustls")]
 use base64::prelude::*;
+#[cfg(feature = "tokio")]
+use std::io::Error;
+#[cfg(feature = "tokio")]
+use tokio::net::TcpStream;
 
 #[cfg(feature = "tls-native")]
 /// A TLS-enabled `MessageStream` implementation using native TLS.
@@ -105,11 +107,9 @@ impl RustlsTlsMessageStream {
 
         // If we have a pinned certificate, configure verification
         if let Some(pinned) = pinned_cert {
-            let cert_der = BASE64_STANDARD
-                .decode(pinned)
-                .map_err(|e| {
-                    MineChatError::ConfigError(format!("Invalid base64 certificate: {}", e))
-                })?;
+            let cert_der = BASE64_STANDARD.decode(pinned).map_err(|e| {
+                MineChatError::ConfigError(format!("Invalid base64 certificate: {}", e))
+            })?;
 
             let cert = CertificateDer::from(cert_der);
 

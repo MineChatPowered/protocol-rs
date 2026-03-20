@@ -11,13 +11,19 @@
 //! - `stream`: Stream implementations for different I/O backends
 //! - `tls`: TLS implementations for secure communication
 //! - `types`: Type definitions for messages and validation
+//! - `payloads`: Typed payload structs for each packet type
+//! - `cbor`: Custom CBOR serialization with integer keys
 
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
+/// Custom CBOR serialization with spec-compliant integer keys
+pub mod cbor;
 /// Client-side protocol operations (linking, authentication)
 pub mod client;
 /// Packet type definitions with serialization
 pub mod packets;
+/// Typed payload structs for each packet type
+pub mod payloads;
 /// Error types and MessageStream trait
 pub mod protocol;
 /// Stream implementations for different I/O backends
@@ -28,9 +34,7 @@ pub mod tls;
 pub mod types;
 
 #[cfg(feature = "tokio")]
-pub use client::{
-    link_with_server, send_capabilities, send_chat_message, send_pong, wait_auth_ok,
-};
+pub use client::{link_with_server, send_capabilities, send_chat_message, send_pong, wait_auth_ok};
 #[cfg(feature = "tokio")]
 pub use stream::TokioMessageStream;
 #[cfg(feature = "tls-rustls")]
@@ -45,8 +49,8 @@ pub use protocol::{
 pub use types::MessageContent;
 
 pub use packets::{
-    ClientUuid, LinkCode, MineChatPacket as Packet, MinecraftUuid, ModerationAction,
-    ModerationScope, Payload, ValidationError,
+    ClientUuid, LinkCode, MessageFormat, MineChatPacket as Packet, MinecraftUuid, ModerationAction,
+    ModerationScope, ValidationError, packet_type, system_disconnect_reason,
 };
 
 pub use kyori_component_json;
