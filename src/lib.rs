@@ -37,10 +37,10 @@ pub mod types;
 pub use client::{link_with_server, send_capabilities, send_chat_message, send_pong, wait_auth_ok};
 #[cfg(feature = "tokio")]
 pub use stream::TokioMessageStream;
-#[cfg(feature = "tls-rustls")]
-pub use tls::rustls::RustlsTlsMessageStream;
 #[cfg(feature = "tls-native")]
 pub use tls::native::TlsMessageStream;
+#[cfg(feature = "tls-rustls")]
+pub use tls::rustls::RustlsTlsMessageStream;
 
 pub use protocol::{
     MessageStream, MineChatError, chat_format, moderation_action, moderation_scope, packet_types,

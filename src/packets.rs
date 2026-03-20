@@ -245,12 +245,12 @@ impl MineChatPacket {
 
         // Key 0: packet_type
         buf.push(0x00); // unsigned(0)
-                        // Value: packet_type (variable length encoding)
+        // Value: packet_type (variable length encoding)
         encode_varint(&mut buf, packet_type as i64);
 
         // Key 1: payload
         buf.push(0x01); // unsigned(1)
-                        // Value: payload bytes
+        // Value: payload bytes
         buf.extend_from_slice(&payload_bytes);
 
         // Protocol invariants: verify envelope structure

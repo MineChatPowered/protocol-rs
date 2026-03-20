@@ -41,7 +41,6 @@ impl From<serde_cbor::Error> for Error {
     }
 }
 
-
 /// Envelope structure for serialization/deserialization.
 ///
 /// This is used internally to serialize/deserialize the packet envelope
@@ -120,7 +119,7 @@ pub fn deserialize<T: for<'de> Deserialize<'de>>(data: &[u8]) -> Result<T> {
     let value: serde_cbor::Value = serde_cbor::de::from_slice(data)?;
     let normalized = normalize_keys(&value);
     let bytes = serde_cbor::to_vec(&normalized)?;
-    serde_cbor::de::from_slice(&bytes).map_err(|e| Error::Serde(e))
+    serde_cbor::de::from_slice(&bytes).map_err(Error::Serde)
 }
 
 /// Normalizes CBOR Value by converting string keys to integer keys where applicable.

@@ -31,8 +31,7 @@ impl TlsMessageStream {
         use native_tls::TlsConnector;
 
         let tcp_stream = TcpStream::connect(addr).await?;
-        let tls_connector =
-            TlsConnector::from(TlsConnector::new().map_err(|e| Error::other(e))?);
+        let tls_connector = TlsConnector::new().map_err(Error::other)?;
         let tls_stream = tokio_native_tls::TlsConnector::from(tls_connector)
             .connect(host, tcp_stream)
             .await
