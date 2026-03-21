@@ -9,7 +9,7 @@
 //! - `packets`: Packet type definitions with serialization
 //! - `protocol`: Error types and MessageStream trait
 //! - `stream`: Stream implementations for different I/O backends
-//! - `tls`: TLS implementations for secure communication
+//! - `tls`: TLS implementations for secure communication (rustls)
 //! - `types`: Type definitions for messages and validation
 //! - `payloads`: Typed payload structs for each packet type
 //! - `cbor`: Custom CBOR serialization with integer keys
@@ -33,13 +33,8 @@ pub mod tls;
 /// Type definitions for messages and validation
 pub mod types;
 
-#[cfg(feature = "tokio")]
 pub use client::{link_with_server, send_capabilities, send_chat_message, send_pong, wait_auth_ok};
-#[cfg(feature = "tokio")]
 pub use stream::TokioMessageStream;
-#[cfg(feature = "tls-native")]
-pub use tls::native::TlsMessageStream;
-#[cfg(feature = "tls-rustls")]
 pub use tls::rustls::RustlsTlsMessageStream;
 
 pub use protocol::{

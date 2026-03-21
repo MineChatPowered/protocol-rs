@@ -4,7 +4,6 @@
 
 use crate::packets::MineChatPacket;
 use crate::protocol::{MessageStream, MineChatError};
-#[cfg(feature = "tokio")]
 use crate::stream::TokioMessageStream;
 use base64::prelude::*;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -20,13 +19,11 @@ use tokio_rustls::TlsConnector as RustlsTlsConnector;
 use tokio_rustls::client::TlsStream as RustlsTlsStream;
 
 /// A TLS-enabled `MessageStream` implementation using rustls with certificate pinning support.
-#[cfg(feature = "tokio")]
 pub struct RustlsTlsMessageStream {
     inner: TokioMessageStream<RustlsTlsStream<tokio::net::TcpStream>>,
     server_cert: Option<CertificateDer<'static>>,
 }
 
-#[cfg(feature = "tokio")]
 impl RustlsTlsMessageStream {
     /// Creates a new `RustlsTlsMessageStream` with certificate pinning.
     ///
@@ -99,7 +96,6 @@ impl RustlsTlsMessageStream {
     }
 }
 
-#[cfg(feature = "tokio")]
 #[async_trait::async_trait]
 impl MessageStream for RustlsTlsMessageStream {
     async fn send_packet(&mut self, packet: &MineChatPacket) -> Result<(), MineChatError> {
