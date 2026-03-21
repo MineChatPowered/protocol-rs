@@ -1,10 +1,11 @@
+//! Protocol error types and traits.
+
 use async_trait::async_trait;
-use kyori_component_json::Component;
-use log::error;
 use miette::Diagnostic;
-use serde::{Deserialize, Serialize};
 use std::io;
 use thiserror::Error;
+
+use crate::packets::MineChatPacket;
 
 /// Errors that can occur during the operation of the MineChat protocol.
 #[derive(Debug, Error, Diagnostic)]
@@ -58,183 +59,95 @@ pub enum MineChatError {
         help = "If this is unexpected, try reconnecting"
     )]
     Disconnected,
+
+    /// Invalid packet type.
+    #[error("Invalid packet type: {0}")]
+    InvalidPacketType(i32),
+
+    /// Invalid frame size.
+    #[error("Invalid frame size: {0}")]
+    InvalidFrameSize(i32),
 }
 
-/// A trait for sending and receiving `MineChatMessage`s over an asynchronous stream.
+/// A trait for sending and receiving `MineChatPacket`s over an asynchronous stream.
 ///
 /// This trait abstracts over the underlying transport, allowing for different
 /// implementations (e.g., Tokio TCP streams, in-memory streams for testing).
 #[async_trait]
 pub trait MessageStream {
-    /// Sends a `MineChatMessage` over the stream.
+    /// Sends a `MineChatPacket` over the stream.
     ///
-    /// The message is serialized using CBOR, compressed with zstd, and then framed
+    /// The packet is serialized using CBOR, compressed with zstd, and then framed
     /// with decompressed and compressed lengths before being written to the stream.
     ///
     /// # Arguments
     ///
-    /// * `msg` - A reference to the `MineChatMessage` to send.
+    /// * `packet` - A reference to the `MineChatPacket` to send.
     ///
     /// # Returns
     ///
-    /// `Ok(())` if the message was sent successfully, or a `MineChatError` otherwise.
-    async fn send_message(&mut self, msg: &MineChatMessage) -> Result<(), MineChatError>;
+    /// `Ok(())` if the packet was sent successfully, or a `MineChatError` otherwise.
+    async fn send_packet(&mut self, packet: &MineChatPacket) -> Result<(), MineChatError>;
 
-    /// Receives a `MineChatMessage` from the stream.
+    /// Receives a `MineChatPacket` from the stream.
     ///
     /// This method reads the message framing (decompressed and compressed lengths),
     /// reads the compressed payload, decompresses it with zstd, and then deserializes
-    /// it from CBOR into a `MineChatMessage`.
+    /// it from CBOR into a `MineChatPacket`.
     ///
     /// # Returns
     ///
-    /// `Ok(MineChatMessage)` if a message was received and parsed successfully,
+    /// `Ok(MineChatPacket)` if a packet was received and parsed successfully,
     /// or a `MineChatError` otherwise.
-    async fn receive_message(&mut self) -> Result<MineChatMessage, MineChatError>;
+    async fn receive_packet(&mut self) -> Result<MineChatPacket, MineChatError>;
 }
 
-/// The different types of messages that can be sent and received in the MineChat protocol.
-///
-/// Each variant represents a distinct message type with its associated payload.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum MineChatMessage {
-    /// An authentication message, sent by the client to authenticate with the server.
-    #[serde(rename = "AUTH")]
-    Auth {
-        /// The authentication payload.
-        payload: AuthPayload,
-    },
-
-    /// An acknowledgment of an authentication attempt, sent by the server.
-    ///
-    /// This message indicates whether the authentication was successful and provides
-    /// additional information like the client's Minecraft UUID and username if available.
-    #[serde(rename = "AUTH_ACK")]
-    AuthAck {
-        /// The authentication acknowledgment payload.
-        payload: AuthAckPayload,
-    },
-
-    /// A chat message, sent by the client to send a message to the server.
-    #[serde(rename = "CHAT")]
-    Chat {
-        /// The chat message payload.
-        payload: ChatPayload,
-    },
-
-    /// A broadcast message, sent by the server to distribute a chat message to all connected clients.
-    #[serde(rename = "BROADCAST")]
-    Broadcast {
-        /// The broadcast message payload.
-        payload: BroadcastPayload,
-    },
-
-    /// A disconnect message, sent by either the client or the server to gracefully close the connection.
-    #[serde(rename = "DISCONNECT")]
-    Disconnect {
-        /// The disconnect message payload.
-        payload: DisconnectPayload,
-    },
+/// Packet type constants
+pub mod packet_types {
+    /// `LINK` packet (Client → Server)
+    pub const LINK: i32 = 0x01;
+    /// `LINK_OK` packet (Server → Client)
+    pub const LINK_OK: i32 = 0x02;
+    /// `CAPABILITIES` packet (Client → Server)
+    pub const CAPABILITIES: i32 = 0x03;
+    /// `AUTH_OK` packet (Server → Client)
+    pub const AUTH_OK: i32 = 0x04;
+    /// `CHAT_MESSAGE` packet (Bidirectional)
+    pub const CHAT_MESSAGE: i32 = 0x05;
+    /// `PING` packet (Bidirectional)
+    pub const PING: i32 = 0x06;
+    /// `PONG` packet (Bidirectional)
+    pub const PONG: i32 = 0x07;
+    /// `MODERATION` packet (Server → Client)
+    pub const MODERATION: i32 = 0x08;
+    /// `DISCONNECT` packet (Bidirectional) - Implementation-private
+    pub const DISCONNECT: i32 = 0x80;
 }
 
-/// The payload for an authentication message (`MineChatMessage::Auth`).
-///
-/// Contains the client's unique identifier and a link code for authentication.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct AuthPayload {
-    /// The client's unique identifier (UUID).
-    pub client_uuid: String,
-    /// The link code used to authenticate with the server.
-    pub link_code: String,
+/// Chat format constants
+pub mod chat_format {
+    /// `commonmark` - CommonMark Markdown format
+    pub const COMMONMARK: &str = "commonmark";
+    /// `components` - JSON-encoded Minecraft Text Component format
+    pub const COMPONENTS: &str = "components";
 }
 
-/// The payload for an authentication acknowledgment message (`MineChatMessage::AuthAck`).
-///
-/// Provides the status of the authentication attempt and optional user details.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct AuthAckPayload {
-    /// The status of the authentication (e.g., "success", "failure").
-    pub status: String,
-    /// A descriptive message regarding the authentication status.
-    pub message: String,
-    /// The client's Minecraft UUID, if authentication was successful and available.
-    pub minecraft_uuid: Option<String>,
-    /// The client's Minecraft username, if authentication was successful and available.
-    pub username: Option<String>,
+/// Moderation action constants
+pub mod moderation_action {
+    /// `WARN` action (0)
+    pub const WARN: i32 = 0;
+    /// `MUTE` action (1)
+    pub const MUTE: i32 = 1;
+    /// `KICK` action (2)
+    pub const KICK: i32 = 2;
+    /// `BAN` action (3)
+    pub const BAN: i32 = 3;
 }
 
-/// The payload for a chat message (`MineChatMessage::Chat`).
-///
-/// Contains the rich text component of the message.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChatPayload {
-    /// The rich text content of the chat message, represented as a `kyori_component_json::Component`.
-    pub message: Component,
-}
-
-/// The payload for a broadcast message (`MineChatMessage::Broadcast`).
-///
-/// Contains the sender's name and the rich text content of the broadcast.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BroadcastPayload {
-    /// The name of the sender of the broadcast message.
-    pub from: String,
-    /// The rich text content of the broadcast message, represented as a `kyori_component_json::Component`.
-    pub message: Component,
-}
-
-/// The payload for a disconnect message (`MineChatMessage::Disconnect`).
-///
-/// Provides a reason for the connection termination.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct DisconnectPayload {
-    /// The reason for the disconnection.
-    pub reason: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use kyori_component_json::Component;
-
-    #[test]
-    fn test_auth_message_serialization() {
-        let msg = MineChatMessage::Auth {
-            payload: AuthPayload {
-                client_uuid: "test-uuid".to_string(),
-                link_code: "test-code".to_string(),
-            },
-        };
-        let serialized = serde_cbor::to_vec(&msg).unwrap();
-        let deserialized: MineChatMessage = serde_cbor::from_slice(&serialized).unwrap();
-
-        if let MineChatMessage::Auth { payload } = deserialized {
-            assert_eq!(payload.client_uuid, "test-uuid");
-            assert_eq!(payload.link_code, "test-code");
-        } else {
-            panic!("Deserialized message is not an Auth message");
-        }
-    }
-
-    #[test]
-    fn test_chat_message_serialization() {
-        let msg = MineChatMessage::Chat {
-            payload: ChatPayload {
-                message: Component::text("Hello, world!"),
-            },
-        };
-        let serialized = serde_cbor::to_vec(&msg).unwrap();
-        let deserialized: MineChatMessage = serde_cbor::from_slice(&serialized).unwrap();
-
-        if let MineChatMessage::Chat { payload } = deserialized {
-            if let Component::Object(obj) = payload.message {
-                assert_eq!(obj.text, Some("Hello, world!".to_string()));
-            } else {
-                panic!("Expected Component::Object");
-            }
-        } else {
-            panic!("Deserialized message is not a Chat message");
-        }
-    }
+/// Moderation scope constants
+pub mod moderation_scope {
+    /// `CLIENT` scope (0) - affects only the current device
+    pub const CLIENT: i32 = 0;
+    /// `ACCOUNT` scope (1) - affects the entire Minecraft account
+    pub const ACCOUNT: i32 = 1;
 }

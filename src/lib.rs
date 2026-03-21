@@ -1,55 +1,51 @@
-//! minechat-protocol: A Rust library for Minecraft chat server communication.
+//! MineChat Protocol Library
 //!
-//! This crate provides an asynchronous, runtime-independent API for interacting with a Minecraft
-//! chat server. It handles message serialization (CBOR), compression (zstd), and framing,
-//! allowing you to focus on the application logic.
+//! This library provides the MineChat protocol implementation for secure,
+//! binary-framed, compressed client-server communication.
 //!
-//! The core of the library is the [`MessageStream`] trait, which defines the interface for
-//! sending and receiving [`MineChatMessage`]s. A default implementation for Tokio streams,
-//! [`TokioMessageStream`], is provided under the `tokio` feature flag.
+//! ## Key Modules
 //!
-//! ## Features
-//!
-//! - **Asynchronous**: Built for non-blocking I/O.
-//! - **Runtime-Independent**: The core [`MessageStream`] trait can be implemented for any
-//!   asynchronous runtime.
-//! - **Efficient**: Messages are serialized with CBOR and compressed with zstd.
-//! - **Rich Text Support**: Integrates with `kyori-component-json` for handling Minecraft's
-//!   rich text components.
-//! - **Authentication**: Provides mechanisms for client authentication with the server.
-//!
-//! ## Getting Started
-//!
-//! Add `minechat-protocol` to your `Cargo.toml`:
-//!
-//! ```toml
-//! [dependencies]
-//! minechat-protocol = "0.4" # Use the latest version
-//! tokio = { version = "1", features = ["full"] } # If using Tokio runtime
-//! kyori-component-json = "0.2" # For rich text components
-//! ```
-//!
-//! ## Examples
-//!
-//! ## Protocol Details
-//!
-//! Messages are framed with 4 bytes for decompressed size, 4 bytes for compressed size,
-//! followed by the zstd-compressed, CBOR-serialized [`MineChatMessage`] payload.
-//!
-//! For more detailed information on message structures and error types, refer to the
-//! [`protocol`] module documentation.
-//!
-//! [`MessageStream`]: crate::protocol::MessageStream
-//! [`MineChatMessage`]: crate::protocol::MineChatMessage
-//! [`TokioMessageStream`]: crate::packets::TokioMessageStream
-//! [`protocol`]: crate::protocol
-#![allow(dead_code)]
+//! - `client`: Client-side protocol operations (linking, authentication)
+//! - `packets`: Packet type definitions with serialization
+//! - `protocol`: Error types and MessageStream trait
+//! - `stream`: Stream implementations for different I/O backends
+//! - `tls`: TLS implementations for secure communication (rustls)
+//! - `types`: Type definitions for messages and validation
+//! - `payloads`: Typed payload structs for each packet type
+//! - `cbor`: Custom CBOR serialization with integer keys
+
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
-/// Contains the implementation of the `TokioMessageStream` and the `link_with_server` function.
+/// Custom CBOR serialization with spec-compliant integer keys
+pub mod cbor;
+/// Client-side protocol operations (linking, authentication)
+pub mod client;
+/// Packet type definitions with serialization
 pub mod packets;
-/// Contains the core protocol definitions, including message types, payloads, and the `MessageStream` trait.
+/// Typed payload structs for each packet type
+pub mod payloads;
+/// Error types and MessageStream trait
 pub mod protocol;
-pub use protocol::MessageStream;
-#[cfg(feature = "tokio")]
-pub use packets::TokioMessageStream;
+/// Stream implementations for different I/O backends
+pub mod stream;
+/// TLS implementations for secure communication
+pub mod tls;
+/// Type definitions for messages and validation
+pub mod types;
+
+pub use client::{link_with_server, send_capabilities, send_chat_message, send_pong, wait_auth_ok};
+pub use stream::TokioMessageStream;
+pub use tls::rustls::RustlsTlsMessageStream;
+
+pub use protocol::{
+    MessageStream, MineChatError, chat_format, moderation_action, moderation_scope, packet_types,
+};
+
+pub use types::MessageContent;
+
+pub use packets::{
+    ClientUuid, LinkCode, MessageFormat, MineChatPacket as Packet, MinecraftUuid, ModerationAction,
+    ModerationScope, ValidationError, packet_type, system_disconnect_reason,
+};
+
+pub use kyori_component_json;
