@@ -7,7 +7,7 @@ repository = "https://github.com/MineChatPowered/protocol-rs"
 description = "The MineChat protocol, enabling you chat with people over on Minecraft"
 authors = ["walker84837"]
 readme = "README.md"
-rust-version = "1.85.0"
+rust-version = "1.88.0"
 keywords = ["networking", "async", "authentication", "chat", "protocol"]
 categories = ["network-programming", "asynchronous", "authentication"]
 
