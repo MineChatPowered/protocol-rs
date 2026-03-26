@@ -13,9 +13,12 @@
 //! - `types`: Type definitions for messages and validation
 //! - `payloads`: Typed payload structs for each packet type
 //! - `cbor`: Custom CBOR serialization with integer keys
+//! - `ansi`: ANSI escape code rendering for terminal colors
 
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
+/// Custom CBOR serialization with spec-compliant integer keys
+pub mod ansi;
 /// Custom CBOR serialization with spec-compliant integer keys
 pub mod cbor;
 /// Client-side protocol operations (linking, authentication)
@@ -33,6 +36,7 @@ pub mod tls;
 /// Type definitions for messages and validation
 pub mod types;
 
+pub use ansi::message_content_to_ansi;
 pub use client::{link_with_server, send_capabilities, send_chat_message, send_pong, wait_auth_ok};
 pub use stream::TokioMessageStream;
 pub use tls::rustls::RustlsTlsMessageStream;
