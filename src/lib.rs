@@ -52,4 +52,4 @@ pub use packets::{
     ModerationScope, ValidationError, packet_type, system_disconnect_reason,
 };
 
-pub use kyori_component_json;
+pub use kyori_component_json as components;

@@ -91,18 +91,21 @@ pub async fn wait_auth_ok(
 /// # Arguments
 ///
 /// * `message_stream` - A mutable reference to a message stream implementing `MessageStream`.
-/// * `supports_components` - Whether the client supports Minecraft text components.
+/// * `supported_formats` - The set of message formats the client supports (must include "components").
+/// * `preferred_format` - The client's preferred format for receiving messages (optional).
 ///
 /// # Errors
 ///
 /// Returns a `MineChatError` if sending the packet fails.
 pub async fn send_capabilities(
     message_stream: &mut (dyn MessageStream + Unpin + Send),
-    supports_components: bool,
+    supported_formats: Vec<String>,
+    preferred_format: Option<String>,
 ) -> Result<(), MineChatError> {
-    trace!("Sending CAPABILITIES packet");
+    trace!("Sending CAPABILITIES packet with formats: {:?}", supported_formats);
     let capabilities_packet = MineChatPacket::Capabilities {
-        supports_components,
+        supported_formats,
+        preferred_format,
     };
 
     message_stream.send_packet(&capabilities_packet).await

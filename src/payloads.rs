@@ -34,14 +34,18 @@ pub struct LinkOkPayload {
 
 /// CAPABILITIES payload (0x03) - Client → Server
 ///
-/// Payload: `{ 0: supports_components }`
+/// Payload: `{ 0: supported_formats, 1: preferred_format? }`
 ///
 /// Sent by the client immediately after linking or reconnecting
-/// to declare supported features.
+/// to declare supported message formats.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilitiesPayload {
-    /// Whether the client supports rich text components
-    pub supports_components: bool,
+    /// The set of message formats the client supports (e.g., ["components", "commonmark"])
+    /// This MUST include "components" per the spec.
+    pub supported_formats: Vec<String>,
+    /// The client's preferred format for receiving messages (optional)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_format: Option<String>,
 }
 
 /// AUTH_OK payload (0x04) - Server → Client
