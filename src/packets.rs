@@ -1,8 +1,8 @@
 //! MineChat packet types and serialization.
 //!
-//! This module defines all packet types for the MineChat protocol as specified
-//! in the protocol specification (Section 8). Each packet consists of an envelope
-//! with a packet type identifier and a typed payload.
+//! This module defines all packet types for the MineChat protocol as specified in the protocol
+//! specification (Section 8). Each packet type consists of an envelope with a packet type
+//! identifier and a typed payload.
 //!
 //! ## Serialization
 //!
@@ -26,13 +26,13 @@ use uuid::Uuid;
 
 /// Packet type constants as defined in the MineChat protocol specification.
 pub mod packet_type {
-    /// `LINK` packet type (0x01) - Client → Server
+    /// `LINK` packet type (0x01) - Client -> Server
     pub const LINK: i32 = 0x01;
-    /// `LINK_OK` packet type (0x02) - Server → Client
+    /// `LINK_OK` packet type (0x02) - Server -> Client
     pub const LINK_OK: i32 = 0x02;
-    /// `CAPABILITIES` packet type (0x03) - Client → Server
+    /// `CAPABILITIES` packet type (0x03) - Client -> Server
     pub const CAPABILITIES: i32 = 0x03;
-    /// `AUTH_OK` packet type (0x04) - Server → Client
+    /// `AUTH_OK` packet type (0x04) - Server -> Client
     pub const AUTH_OK: i32 = 0x04;
     /// `CHAT_MESSAGE` packet type (0x05) - Bidirectional
     pub const CHAT_MESSAGE: i32 = 0x05;
@@ -40,9 +40,9 @@ pub mod packet_type {
     pub const PING: i32 = 0x06;
     /// `PONG` packet type (0x07) - Bidirectional
     pub const PONG: i32 = 0x07;
-    /// `MODERATION` packet type (0x08) - Server → Client
+    /// `MODERATION` packet type (0x08) - Server -> Client
     pub const MODERATION: i32 = 0x08;
-    /// `SYSTEM_DISCONNECT` packet type (0x09) - Server → Client
+    /// `SYSTEM_DISCONNECT` packet type (0x09) - Server -> Client
     pub const SYSTEM_DISCONNECT: i32 = 0x09;
 }
 
@@ -139,11 +139,10 @@ impl MessageFormat {
 
 /// A MineChat packet with proper type tagging.
 ///
-/// Each variant corresponds to a packet type as defined in the protocol
-/// specification (Section 8).
+/// Each variant corresponds to a packet type as defined in the protocol specification (Section 8).
 #[derive(Debug, Clone, PartialEq)]
 pub enum MineChatPacket {
-    /// `LINK` packet (0x01) - Client → Server
+    /// `LINK` packet (0x01) - Client -> Server
     Link {
         /// The linking code from the Minecraft server
         linking_code: LinkCode,
@@ -151,13 +150,13 @@ pub enum MineChatPacket {
         client_uuid: ClientUuid,
     },
 
-    /// `LINK_OK` packet (0x02) - Server → Client
+    /// `LINK_OK` packet (0x02) - Server -> Client
     LinkOk {
         /// The Minecraft UUID of the linked account
         minecraft_uuid: MinecraftUuid,
     },
 
-    /// `CAPABILITIES` packet (0x03) - Client → Server
+    /// `CAPABILITIES` packet (0x03) - Client -> Server
     Capabilities {
         /// The set of message formats the client supports
         supported_formats: Vec<String>,
@@ -165,7 +164,7 @@ pub enum MineChatPacket {
         preferred_format: Option<String>,
     },
 
-    /// `AUTH_OK` packet (0x04) - Server → Client
+    /// `AUTH_OK` packet (0x04) - Server -> Client
     AuthOk,
 
     /// `CHAT_MESSAGE` packet (0x05) - Bidirectional
@@ -174,6 +173,8 @@ pub enum MineChatPacket {
         format: MessageFormat,
         /// The message content
         content: MessageContent,
+        /// The message source ("minechat" or "minecraft")
+        source: String,
     },
 
     /// `PING` packet (0x06) - Bidirectional
@@ -188,7 +189,7 @@ pub enum MineChatPacket {
         timestamp_ms: i64,
     },
 
-    /// `MODERATION` packet (0x08) - Server → Client
+    /// `MODERATION` packet (0x08) - Server -> Client
     Moderation {
         /// The moderation action (0=warn, 1=mute, 2=kick, 3=ban)
         action: ModerationAction,
@@ -200,7 +201,7 @@ pub enum MineChatPacket {
         duration_seconds: Option<i32>,
     },
 
-    /// `SYSTEM_DISCONNECT` packet (0x09) - Server → Client
+    /// `SYSTEM_DISCONNECT` packet (0x09) - Server -> Client
     SystemDisconnect {
         /// The reason code (0=shutdown, 1=maintenance, 2=internal_error, 3=overloaded)
         reason_code: i32,
@@ -232,9 +233,6 @@ impl MineChatPacket {
     }
 
     /// Serializes this packet to CBOR bytes with spec-compliant integer keys.
-    ///
-    /// This method should be used for network transmission to ensure
-    /// spec-compliant serialization.
     pub fn to_bytes(&self) -> Result<Vec<u8>, ValidationError> {
         let (packet_type, payload_bytes) = self.serialize_payload()?;
 
@@ -247,12 +245,12 @@ impl MineChatPacket {
 
         // Key 0: packet_type
         buf.push(0x00); // unsigned(0)
-                        // Value: packet_type (variable length encoding)
+        // Value: packet_type (variable length encoding)
         encode_varint(&mut buf, packet_type as i64);
 
         // Key 1: payload
         buf.push(0x01); // unsigned(1)
-                        // Value: payload bytes
+        // Value: payload bytes
         buf.extend_from_slice(&payload_bytes);
 
         // Protocol invariants: verify envelope structure
@@ -315,10 +313,15 @@ impl MineChatPacket {
                 // Empty payload
                 vec![0xa0] // empty map
             }
-            MineChatPacket::ChatMessage { format, content } => {
+            MineChatPacket::ChatMessage {
+                format,
+                content,
+                source,
+            } => {
                 let payload = ChatMessagePayload {
                     format: format.as_str().to_string(),
                     content: content.to_cbor_string(),
+                    source: source.clone(),
                 };
                 cbor::serialize(&payload)
                     .map_err(|e| ValidationError::Serialization(e.to_string()))?
@@ -414,7 +417,11 @@ impl MineChatPacket {
                 } else {
                     MessageContent::CommonMark(payload.content)
                 };
-                Ok(MineChatPacket::ChatMessage { format, content })
+                Ok(MineChatPacket::ChatMessage {
+                    format,
+                    content,
+                    source: payload.source,
+                })
             }
             packet_type::PING => {
                 let payload: PingPayload = decode_payload(payload)?;
@@ -513,14 +520,15 @@ pub struct LinkCode(String);
 impl LinkCode {
     /// Creates a new LinkCode from a string
     /// Returns ValidationError if the code is too long (empty is allowed for reconnection)
-    pub fn new(code: String) -> Result<Self, ValidationError> {
-        if code.len() > 100 {
+    pub fn new<S: Into<String>>(code: S) -> Result<Self, ValidationError> {
+        let s = code.into();
+        if s.len() > 100 {
             return Err(ValidationError::MessageTooLarge {
-                size: code.len(),
+                size: s.len(),
                 max_size: 100,
             });
         }
-        Ok(Self(code))
+        Ok(Self(s))
     }
 
     /// Returns the string representation of this link code
@@ -535,7 +543,8 @@ pub struct ClientUuid(String);
 
 impl ClientUuid {
     /// Creates a new ClientUuid from a string
-    /// Returns ValidationError if the string is not a valid UUID
+    ///
+    /// Returns [`ValidationError`] if the string is not a valid UUID
     pub fn new(uuid: String) -> Result<Self, ValidationError> {
         Uuid::parse_str(&uuid).map_err(|_| ValidationError::InvalidUuid {
             value: uuid.clone(),
@@ -543,7 +552,7 @@ impl ClientUuid {
         Ok(Self(uuid))
     }
 
-    /// Generates a new random ClientUuid
+    /// Generates a new random [`ClientUuid`]
     pub fn generate() -> Self {
         Self(Uuid::new_v4().to_string())
     }
@@ -560,6 +569,7 @@ pub struct MinecraftUuid(String);
 
 impl MinecraftUuid {
     /// Creates a new MinecraftUuid from a string
+    ///
     /// Returns ValidationError if the string is not a valid UUID
     pub fn new(uuid: String) -> Result<Self, ValidationError> {
         Uuid::parse_str(&uuid).map_err(|_| ValidationError::InvalidUuid {
@@ -589,6 +599,7 @@ impl ModerationAction {
     pub const BAN: Self = Self(3);
 
     /// Creates a new ModerationAction from an i32
+    ///
     /// Returns ValidationError if the value is not 0-3
     pub fn new(action: i32) -> Result<Self, ValidationError> {
         match action {
@@ -658,6 +669,7 @@ mod tests {
         let packet = MineChatPacket::ChatMessage {
             format: MessageFormat::commonmark(),
             content: MessageContent::CommonMark("Hello, world!".to_string()),
+            source: "minechat".to_string(),
         };
 
         let bytes = packet.to_bytes().unwrap();

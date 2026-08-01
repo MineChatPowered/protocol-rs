@@ -104,13 +104,13 @@ pub trait MessageStream {
 
 /// Packet type constants
 pub mod packet_types {
-    /// `LINK` packet (Client → Server)
+    /// `LINK` packet (Client -> Server)
     pub const LINK: i32 = 0x01;
-    /// `LINK_OK` packet (Server → Client)
+    /// `LINK_OK` packet (Server -> Client)
     pub const LINK_OK: i32 = 0x02;
-    /// `CAPABILITIES` packet (Client → Server)
+    /// `CAPABILITIES` packet (Client -> Server)
     pub const CAPABILITIES: i32 = 0x03;
-    /// `AUTH_OK` packet (Server → Client)
+    /// `AUTH_OK` packet (Server -> Client)
     pub const AUTH_OK: i32 = 0x04;
     /// `CHAT_MESSAGE` packet (Bidirectional)
     pub const CHAT_MESSAGE: i32 = 0x05;
@@ -118,7 +118,7 @@ pub mod packet_types {
     pub const PING: i32 = 0x06;
     /// `PONG` packet (Bidirectional)
     pub const PONG: i32 = 0x07;
-    /// `MODERATION` packet (Server → Client)
+    /// `MODERATION` packet (Server -> Client)
     pub const MODERATION: i32 = 0x08;
     /// `DISCONNECT` packet (Bidirectional) - Implementation-private
     pub const DISCONNECT: i32 = 0x80;

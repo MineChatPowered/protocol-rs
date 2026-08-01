@@ -1,17 +1,17 @@
 //! Typed payload structs for each packet type.
 //!
-//! Each payload struct corresponds to a specific packet type as defined in the
-//! MineChat protocol specification (Section 8). Field keys use integer indices
-//! per the spec's CBOR encoding requirements.
+//! Each payload struct corresponds to a specific packet type as defined in the MineChat protocol
+//! specification (section 8 of the spec). Field keys use integer indices per the spec's CBOR
+//! encoding requirements.
 
 use serde::{Deserialize, Serialize};
 
-/// LINK payload (0x01) - Client → Server
+/// LINK payload (0x01) - Client -> Server
 ///
 /// Payload: `{ 0: linking_code, 1: client_uuid }`
 ///
-/// Sent by the client during initial linking with the linking code
-/// received from the Minecraft server.
+/// Sent by the client during initial linking with the linking code received from the Minecraft
+/// server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkPayload {
     /// The linking code from the Minecraft server
@@ -20,24 +20,23 @@ pub struct LinkPayload {
     pub client_uuid: String,
 }
 
-/// LINK_OK payload (0x02) - Server → Client
+/// LINK_OK payload (0x02) - Server -> Client
 ///
 /// Payload: `{ 0: minecraft_uuid }`
 ///
-/// Sent by the server when linking succeeds, containing the
-/// Minecraft account UUID.
+/// Sent by the server when linking succeeds, containing the Minecraft account UUID.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkOkPayload {
     /// The Minecraft UUID of the linked account
     pub minecraft_uuid: String,
 }
 
-/// CAPABILITIES payload (0x03) - Client → Server
+/// CAPABILITIES payload (0x03) - Client -> Server
 ///
 /// Payload: `{ 0: supported_formats, 1: preferred_format? }`
 ///
-/// Sent by the client immediately after linking or reconnecting
-/// to declare supported message formats.
+/// Sent by the client immediately after linking or reconnecting to declare supported message
+/// formats.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilitiesPayload {
     /// The set of message formats the client supports (e.g., ["components", "commonmark"])
@@ -48,28 +47,29 @@ pub struct CapabilitiesPayload {
     pub preferred_format: Option<String>,
 }
 
-/// AUTH_OK payload (0x04) - Server → Client
+/// AUTH_OK payload (0x04) - Server -> Client
 ///
 /// Payload: `{}` (empty)
 ///
-/// Indicates that authentication is complete and the client
-/// may begin sending messages.
+/// Indicates that authentication is complete and the client may begin sending messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthOkPayload {}
 
 /// CHAT_MESSAGE payload (0x05) - Bidirectional
 ///
-/// Payload: `{ 0: format, 1: content }`
+/// Payload: `{ 0: format, 1: content, 2: source }`
 ///
-/// Carries chat messages between client and server. The format
-/// field indicates whether content is CommonMark or Minecraft
-/// text components.
+/// Carries chat messages between client and server. The format field indicates whether content is
+/// CommonMark or Minecraft text components. The source field indicates the origin of the message
+/// ("minechat" or "minecraft").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessagePayload {
     /// The message format ("commonmark" or "components")
     pub format: String,
     /// The message content
     pub content: String,
+    /// The message source ("minechat" or "minecraft")
+    pub source: String,
 }
 
 /// PING payload (0x06) - Bidirectional
@@ -87,20 +87,18 @@ pub struct PingPayload {
 ///
 /// Payload: `{ 0: timestamp_ms }`
 ///
-/// Response to PING packet. The timestamp MUST match the
-/// corresponding PING.
+/// Response to PING packet. The timestamp MUST match the corresponding PING.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PongPayload {
     /// Timestamp in milliseconds (must match the corresponding PING)
     pub timestamp_ms: i64,
 }
 
-/// MODERATION payload (0x08) - Server → Client
+/// MODERATION payload (0x08) - Server -> Client
 ///
 /// Payload: `{ 0: action, 1: scope, 2: reason?, 3: duration_seconds? }`
 ///
-/// Used by the server to enforce moderation actions such as warnings,
-/// mutes, kicks, or bans.
+/// Used by the server to enforce moderation actions such as warnings, mutes, kicks or bans.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModerationPayload {
     /// The moderation action (0=warn, 1=mute, 2=kick, 3=ban)
@@ -115,14 +113,13 @@ pub struct ModerationPayload {
     pub duration_seconds: Option<i32>,
 }
 
-/// SYSTEM_DISCONNECT payload (0x09) - Server → Client
+/// SYSTEM_DISCONNECT payload (0x09) - Server -> Client
 ///
 /// Payload: `{ 0: reason_code, 1: message }`
 ///
-/// Indicates that the server is intentionally terminating the connection
-/// due to a system-level lifecycle event (shutdown, maintenance, etc.).
-/// After sending this packet, the server MUST immediately close the
-/// underlying TCP connection.
+/// Indicates that the server is intentionally terminating the connection due to a system-level
+/// lifecycle event (shutdown, maintenance, etc.). After sending a packet, the server **MUST**
+/// close the underlying TCP connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemDisconnectPayload {
     /// The reason code (0=shutdown, 1=maintenance, 2=internal_error, 3=overloaded)

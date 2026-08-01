@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 /// Attempts to link with the server using the provided link code.
 ///
-/// This function sends a `LINK` message to the server with the client UUID and link code,
-/// and then waits for a `LINK_OK` response.
+/// This function sends a `LINK` message to the server with the client UUID and link code, and then
+/// waits for a `LINK_OK` response.
 ///
 /// # Arguments
 ///
@@ -19,9 +19,9 @@ use uuid::Uuid;
 ///
 /// # Returns
 ///
-/// `Ok((String, String))` containing (client_uuid, minecraft_uuid) if linking is successful.
-/// `Err(MineChatError)` if authentication fails, an unexpected message is received,
-/// or any other error occurs during packet sending/receiving.
+/// - `Ok((String, String))` containing (client_uuid, minecraft_uuid) if linking is successful.
+/// - `Err(MineChatError)` if authentication fails, an unexpected message is received, or any other
+///   error occurs during packet sending/receiving.
 pub async fn link_with_server(
     message_stream: &mut (dyn MessageStream + Unpin + Send),
     client_uuid: Option<String>,
@@ -43,6 +43,7 @@ pub async fn link_with_server(
     let link_packet = MineChatPacket::Link {
         linking_code: LinkCode::new(link_code.to_string())
             .map_err(|e| MineChatError::ConfigError(format!("invalid link code: {}", e)))?,
+
         client_uuid: ClientUuid::new(client_uuid_str.clone())
             .map_err(|e| MineChatError::ConfigError(format!("invalid client UUID: {}", e)))?,
     };
@@ -102,7 +103,10 @@ pub async fn send_capabilities(
     supported_formats: Vec<String>,
     preferred_format: Option<String>,
 ) -> Result<(), MineChatError> {
-    trace!("Sending CAPABILITIES packet with formats: {:?}", supported_formats);
+    trace!(
+        "Sending CAPABILITIES packet with formats: {:?}",
+        supported_formats
+    );
     let capabilities_packet = MineChatPacket::Capabilities {
         supported_formats,
         preferred_format,
@@ -118,6 +122,7 @@ pub async fn send_capabilities(
 /// * `message_stream` - A mutable reference to a message stream implementing `MessageStream`.
 /// * `format` - The message format ("commonmark" or "components").
 /// * `content` - The message content.
+/// * `source` - The message source ("minechat" or "minecraft", defaults to "minechat").
 ///
 /// # Errors
 ///
@@ -126,12 +131,18 @@ pub async fn send_chat_message(
     message_stream: &mut (dyn MessageStream + Unpin + Send),
     format: &str,
     content: &str,
+    source: Option<&str>,
 ) -> Result<(), MineChatError> {
-    trace!("Sending CHAT_MESSAGE packet: {}", content);
+    let source = source.unwrap_or("minechat").to_string();
+    trace!(
+        "Sending CHAT_MESSAGE packet: {} (source: {})",
+        content, source
+    );
     let chat_packet = MineChatPacket::ChatMessage {
         format: MessageFormat::new(format.to_string())
             .map_err(|e| MineChatError::ConfigError(format!("invalid format: {}", e)))?,
         content: MessageContent::CommonMark(content.to_string()),
+        source,
     };
 
     message_stream.send_packet(&chat_packet).await
